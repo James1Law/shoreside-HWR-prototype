@@ -587,7 +587,16 @@ function VesselDetail({ vessel, onBack, onSelectCrew }) {
         <div key={dept} style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: colors.textSecondary, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 8 }}>{dept}</div>
           <div style={{ background: colors.white, borderRadius: 10, border: `1px solid ${colors.border}`, overflow: "hidden" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, tableLayout: "fixed" }}>
+              <colgroup>
+                <col style={{ width: "22%" }} />
+                <col style={{ width: "13%" }} />
+                <col style={{ width: "13%" }} />
+                <col style={{ width: "13%" }} />
+                <col style={{ width: "13%" }} />
+                <col style={{ width: "13%" }} />
+                <col style={{ width: "13%" }} />
+              </colgroup>
               <thead>
                 <tr style={{ background: "#f8fafc" }}>
                   <th style={thStyle}>Seafarer</th>
