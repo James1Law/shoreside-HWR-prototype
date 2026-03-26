@@ -370,6 +370,70 @@ VESSEL_PROFILES.forEach(vp => {
   });
 });
 
+/* ─── Dashboard metrics aggregation ─── */
+function computeDashboardMetrics() {
+  let totalCrew = 0, totalNcCrewToday = 0, totalNcDaysFleet30d = 0, restSum = 0;
+  const reasonCounts = {};
+  const locationCounts = {};
+  const vesselTypeCounts = {};
+  const deptCounts = {};
+  const trendByDay = Array.from({ length: DISPLAY_DAYS }, () => 0);
+  const allCrew = [];
+
+  for (const v of VESSEL_DATA) {
+    let vesselNcSum = 0;
+    for (const c of v.crew) {
+      totalCrew++;
+      totalNcDaysFleet30d += c.ncDays30;
+      vesselNcSum += c.ncDays30;
+      restSum += parseFloat(c.restToday);
+      if (c.daily24h === "fail" || c.weekly7d === "fail") totalNcCrewToday++;
+
+      // Department
+      deptCounts[c.dept] = (deptCounts[c.dept] || 0) + c.ncDays30;
+
+      // Timesheet details
+      const tsKey = `${v.id}-${c.id}`;
+      const tsData = CREW_TIMESHEETS.get(tsKey);
+      if (tsData) {
+        tsData.displayDays.forEach((d, i) => {
+          if (d.reason) reasonCounts[d.reason] = (reasonCounts[d.reason] || 0) + 1;
+          if (d.daily === "fail" || d.intervals === "fail") trendByDay[i]++;
+        });
+      }
+
+      allCrew.push({ ...c, vesselName: v.name, vesselId: v.id });
+    }
+
+    // Location
+    locationCounts[v.location] = (locationCounts[v.location] || 0) + vesselNcSum;
+
+    // Vessel type
+    if (!vesselTypeCounts[v.type]) vesselTypeCounts[v.type] = { count: 0, vessels: 0 };
+    vesselTypeCounts[v.type].count += vesselNcSum;
+    vesselTypeCounts[v.type].vessels++;
+  }
+
+  const ocimfFlaggedVessels = VESSEL_DATA.filter(v => v.crew.some(c => c.ncDays30 >= 3)).length;
+
+  return {
+    totalCrew,
+    totalNcCrewToday,
+    totalNcDaysFleet30d,
+    ocimfFlaggedVessels,
+    avgRestHours: totalCrew > 0 ? Math.round((restSum / totalCrew) * 10) / 10 : 0,
+    ncByReason: Object.entries(reasonCounts).map(([reason, count]) => ({ label: reason, value: count })).sort((a, b) => b.value - a.value),
+    ncByLocation: Object.entries(locationCounts).map(([loc, count]) => ({ label: loc, value: count })).sort((a, b) => b.value - a.value),
+    ncByVessel: VESSEL_DATA.map(v => ({ label: v.name, value: v.crew.reduce((s, c) => s + c.ncDays30, 0) })).sort((a, b) => b.value - a.value),
+    ncByVesselType: Object.entries(vesselTypeCounts).map(([type, d]) => ({ label: type, value: d.count, vessels: d.vessels })).sort((a, b) => b.value - a.value),
+    ncByDepartment: Object.entries(deptCounts).map(([dept, count]) => ({ label: dept, value: count })).sort((a, b) => b.value - a.value),
+    ncByRank: allCrew.reduce((acc, c) => { const key = `${c.dept}|||${c.rank}`; acc[key] = (acc[key] || 0) + c.ncDays30; return acc; }, {}),
+    ncTrend: Array.from({ length: DISPLAY_DAYS }, (_, i) => ({ label: formatDate(i), value: trendByDay[i] })).reverse(),
+    worstCrew: allCrew.sort((a, b) => b.ncDays30 - a.ncDays30).slice(0, 10),
+  };
+}
+const DASHBOARD_METRICS = computeDashboardMetrics();
+
 /* ═══════════════════════════════════════════════════════════════════════════
    UI LAYER — styles, components, screens
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -440,13 +504,230 @@ function SeverityIndicator({ ncDays30 }) {
   return <span style={{ color: colors.green, fontWeight: 500, fontSize: 13 }}>0</span>;
 }
 
+/* ─── Chart components ─── */
+function ChartPanel({ title, children }) {
+  return (
+    <div style={{ background: colors.white, borderRadius: 10, border: `1px solid ${colors.border}`, overflow: "hidden" }}>
+      <div style={{ padding: "12px 16px", borderBottom: `1px solid ${colors.border}`, fontSize: 14, fontWeight: 700, color: colors.text }}>{title}</div>
+      <div style={{ padding: 16 }}>{children}</div>
+    </div>
+  );
+}
+
+function HorizontalBarChart({ data, barColor, colorFn, onClickItem }) {
+  const max = Math.max(...data.map(d => d.value), 1);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {data.map((d, i) => (
+        <div key={d.label} style={{ display: "flex", alignItems: "center", gap: 10, cursor: onClickItem ? "pointer" : "default" }} onClick={() => onClickItem && onClickItem(d, i)}>
+          <div style={{ width: "35%", fontSize: 12, color: onClickItem ? colors.linkBlue : colors.text, fontWeight: onClickItem ? 500 : 400, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={d.label}>{d.label}</div>
+          <div style={{ flex: 1, height: 22, background: colors.bg, borderRadius: 4, overflow: "hidden" }}>
+            <div style={{ width: `${(d.value / max) * 100}%`, height: "100%", background: colorFn ? colorFn(d, i) : (barColor || colors.teal), borderRadius: 4, transition: "width 0.3s", minWidth: d.value > 0 ? 4 : 0 }} />
+          </div>
+          <div style={{ width: 36, textAlign: "right", fontSize: 12, fontWeight: 600, color: colors.text }}>{d.value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DonutChart({ data }) {
+  const total = data.reduce((s, d) => s + d.value, 0) || 1;
+  let cumDeg = 0;
+  const segments = data.filter(d => d.value > 0).map(d => {
+    const start = cumDeg;
+    cumDeg += (d.value / total) * 360;
+    return `${d.color} ${start}deg ${cumDeg}deg`;
+  });
+  const gradient = segments.length > 0 ? `conic-gradient(${segments.join(", ")})` : colors.bg;
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
+      <div style={{ position: "relative", width: 140, height: 140, flexShrink: 0 }}>
+        <div style={{ width: 140, height: 140, borderRadius: "50%", background: gradient }} />
+        <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: 80, height: 80, borderRadius: "50%", background: colors.white, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column" }}>
+          <div style={{ fontSize: 20, fontWeight: 700, color: colors.text }}>{total}</div>
+          <div style={{ fontSize: 10, color: colors.textSecondary }}>total</div>
+        </div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {data.map(d => (
+          <div key={d.label} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+            <div style={{ width: 12, height: 12, borderRadius: 2, background: d.color, flexShrink: 0 }} />
+            <span style={{ color: colors.text }}>{d.label}</span>
+            <span style={{ fontWeight: 600, color: colors.text }}>{d.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TrendChart({ data }) {
+  const max = Math.max(...data.map(d => d.value), 1);
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 140 }}>
+        {data.map((d, i) => (
+          <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>
+            {d.value > 0 && <div style={{ fontSize: 10, fontWeight: 600, color: colors.text, marginBottom: 2 }}>{d.value}</div>}
+            <div style={{
+              width: "100%", maxWidth: 40,
+              height: `${Math.max((d.value / max) * 110, d.value > 0 ? 6 : 2)}px`,
+              background: d.value > 0 ? colors.red : colors.greenBg,
+              borderRadius: "3px 3px 0 0",
+              opacity: d.value > 0 ? 0.85 : 0.5,
+            }} />
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+        {data.map((d, i) => (
+          <div key={i} style={{ flex: 1, textAlign: "center", fontSize: 9, color: colors.textSecondary, lineHeight: 1.2 }}>
+            {d.label.replace(/ \d{4}$/, "")}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Dashboard view ─── */
+const VESSEL_TYPE_COLORS = { "Bulk Carrier": "#3b82f6", "Oil Tanker": "#ef4444", "Container": "#f59e0b", "Chemical Tanker": "#8b5cf6", "General Cargo": "#0891b2" };
+const DEPT_COLORS = { "Top Four": "#ef4444", "Deck": "#3b82f6", "Engine": "#f59e0b", "Catering": "#8b5cf6" };
+
+function FleetDashboard({ onSelectVessel, onSelectCrew }) {
+  const m = DASHBOARD_METRICS;
+  const [expandedDept, setExpandedDept] = useState(null);
+
+  const handleVesselClick = (d) => {
+    const vessel = VESSEL_DATA.find(v => v.name === d.label);
+    if (vessel) onSelectVessel(vessel);
+  };
+
+  const getRanksForDept = (dept) => {
+    return Object.entries(m.ncByRank)
+      .filter(([key]) => key.startsWith(`${dept}|||`))
+      .map(([key, count]) => ({ label: key.split("|||")[1], value: count }))
+      .sort((a, b) => b.value - a.value);
+  };
+
+  return (
+    <div>
+      {/* KPI cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 20 }}>
+        {[
+          { label: "Total crew", value: m.totalCrew, sub: `Across ${VESSEL_DATA.length} vessels`, color: colors.text },
+          { label: "Active NCs today", value: m.totalNcCrewToday, sub: "Crew with 24h or 7d violations", color: m.totalNcCrewToday > 0 ? colors.red : colors.green },
+          { label: "Fleet NC days (30d)", value: m.totalNcDaysFleet30d, sub: "Sum across all crew", color: m.totalNcDaysFleet30d > 0 ? colors.amber : colors.green },
+          { label: "OCIMF flagged vessels", value: m.ocimfFlaggedVessels, sub: "Crew with ≥3 NC days", color: m.ocimfFlaggedVessels > 0 ? colors.red : colors.green },
+          { label: "Avg rest hours (today)", value: `${m.avgRestHours}h`, sub: "Fleet average, target ≥10h", color: m.avgRestHours < 10 ? colors.red : colors.green },
+        ].map((c, i) => (
+          <div key={i} style={{ background: colors.white, borderRadius: 8, border: `1px solid ${colors.border}`, padding: "14px 16px" }}>
+            <div style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 6 }}>{c.label}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: c.color }}>{c.value}</div>
+            <div style={{ fontSize: 11, color: colors.textSecondary, marginTop: 3 }}>{c.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Row 2: By Vessel + By Reason */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+        <ChartPanel title="NC days by vessel (30d)">
+          <HorizontalBarChart data={m.ncByVessel} colorFn={d => d.value >= 10 ? colors.red : d.value >= 3 ? colors.amber : colors.green} onClickItem={handleVesselClick} />
+        </ChartPanel>
+        <ChartPanel title="NC days by reason (10d visible)">
+          <HorizontalBarChart data={m.ncByReason} barColor={colors.teal} />
+        </ChartPanel>
+      </div>
+
+      {/* Row 3: By Location + By Vessel Type */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+        <ChartPanel title="NC days by location (30d)">
+          <HorizontalBarChart data={m.ncByLocation} barColor={colors.blue} />
+        </ChartPanel>
+        <ChartPanel title="NC days by vessel type (30d)">
+          <DonutChart data={m.ncByVesselType.map(d => ({ ...d, color: VESSEL_TYPE_COLORS[d.label] || colors.textSecondary }))} />
+        </ChartPanel>
+      </div>
+
+      {/* Row 4: Trend + By Department */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+        <ChartPanel title="Daily NC occurrences (10-day trend)">
+          <TrendChart data={m.ncTrend} />
+        </ChartPanel>
+        <ChartPanel title="NC days by department (30d)">
+          <HorizontalBarChart data={m.ncByDepartment} colorFn={d => DEPT_COLORS[d.label] || colors.teal} onClickItem={(d) => setExpandedDept(expandedDept === d.label ? null : d.label)} />
+          {expandedDept && (
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${colors.border}` }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: colors.textSecondary, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ width: 10, height: 10, borderRadius: 2, background: DEPT_COLORS[expandedDept], display: "inline-block" }} />
+                {expandedDept} — by rank
+                <span style={{ marginLeft: "auto", cursor: "pointer", color: colors.linkBlue, fontWeight: 500, fontSize: 11 }} onClick={() => setExpandedDept(null)}>Close</span>
+              </div>
+              <HorizontalBarChart data={getRanksForDept(expandedDept)} barColor={DEPT_COLORS[expandedDept] || colors.teal} />
+            </div>
+          )}
+        </ChartPanel>
+      </div>
+
+      {/* Row 5: Worst crew */}
+      <ChartPanel title="Highest NC days — crew members (30d)">
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: "#f8fafc" }}>
+              <th style={{ ...thStyle, width: 30 }}>#</th>
+              <th style={thStyle}>Seafarer</th>
+              <th style={thStyle}>Vessel</th>
+              <th style={thStyle}>Dept</th>
+              <th style={{ ...thStyle, textAlign: "center" }}>NC days (30d)</th>
+              <th style={{ ...thStyle, textAlign: "center" }}>Rest today</th>
+              <th style={{ ...thStyle, textAlign: "center" }}>24h status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {m.worstCrew.map((c, i) => (
+              <tr key={c.id}
+                style={{ borderTop: `1px solid ${colors.border}`, cursor: "pointer", transition: "background 0.15s" }}
+                onMouseEnter={e => e.currentTarget.style.background = "#f0f9ff"}
+                onMouseLeave={e => e.currentTarget.style.background = colors.white}
+                onClick={() => {
+                  const vessel = VESSEL_DATA.find(v => v.id === c.vesselId);
+                  if (vessel && onSelectCrew) onSelectCrew(vessel, c);
+                }}
+              >
+                <td style={{ ...tdStyle, color: colors.textSecondary, fontWeight: 500 }}>{i + 1}</td>
+                <td style={tdStyle}>
+                  <div style={{ fontWeight: 600, color: colors.linkBlue }}>{c.name}</div>
+                  <div style={{ fontSize: 11, color: colors.textSecondary }}>{c.rank}</div>
+                </td>
+                <td style={{ ...tdStyle, fontSize: 12, color: colors.textSecondary }}>{c.vesselName}</td>
+                <td style={{ ...tdStyle, fontSize: 12, color: colors.textSecondary }}>{c.dept}</td>
+                <td style={{ ...tdStyle, textAlign: "center" }}><SeverityIndicator ncDays30={c.ncDays30} /></td>
+                <td style={{ ...tdStyle, textAlign: "center", color: parseFloat(c.restToday) < 10 ? colors.red : colors.textSecondary, fontWeight: parseFloat(c.restToday) < 10 ? 600 : 400 }}>{c.restToday}</td>
+                <td style={{ ...tdStyle, textAlign: "center" }}><Chip type={c.daily24h} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </ChartPanel>
+    </div>
+  );
+}
+
 /* ─── SCREEN 1: Fleet Overview ─── */
-function FleetOverview({ onSelectVessel }) {
+function FleetOverview({ onSelectVessel, onSelectCrew, fleetView, setFleetView }) {
   const [sortBy, setSortBy] = useState("severity");
   const sorted = [...VESSEL_DATA].sort((a, b) => {
     if (sortBy === "severity") return b.ncDays30 - a.ncDays30 || b.activeNCs - a.activeNCs;
     if (sortBy === "name") return a.name.localeCompare(b.name);
     return 0;
+  });
+
+  const toggleBtnStyle = (active) => ({
+    padding: "6px 14px", fontSize: 12, fontWeight: 600, border: `1px solid ${active ? colors.primaryBtn : colors.border}`,
+    background: active ? colors.primaryBtn : colors.white, color: active ? "#fff" : colors.text,
+    cursor: "pointer", transition: "all 0.15s",
   });
 
   return (
@@ -458,79 +739,92 @@ function FleetOverview({ onSelectVessel }) {
             {VESSEL_DATA.length} vessels &middot; Showing last 30 days &middot; Data as of {formatDate(0)}
           </p>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ padding: "7px 12px", borderRadius: 6, border: `1px solid ${colors.border}`, fontSize: 13, color: colors.text, background: colors.white, cursor: "pointer" }}>
-            <option value="severity">Sort: Most urgent first</option>
-            <option value="name">Sort: Vessel name</option>
-          </select>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {fleetView === "table" && (
+            <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ padding: "7px 12px", borderRadius: 6, border: `1px solid ${colors.border}`, fontSize: 13, color: colors.text, background: colors.white, cursor: "pointer" }}>
+              <option value="severity">Sort: Most urgent first</option>
+              <option value="name">Sort: Vessel name</option>
+            </select>
+          )}
+          {/* View toggle */}
+          <div style={{ display: "flex", borderRadius: 6, overflow: "hidden" }}>
+            <button onClick={() => setFleetView("table")} style={{ ...toggleBtnStyle(fleetView === "table"), borderRadius: "6px 0 0 6px", borderRight: "none" }}>Table</button>
+            <button onClick={() => setFleetView("dashboard")} style={{ ...toggleBtnStyle(fleetView === "dashboard"), borderRadius: "0 6px 6px 0" }}>Dashboard</button>
+          </div>
         </div>
       </div>
 
-      {/* OCIMF threshold legend */}
-      <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "10px 14px", marginBottom: 16, display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-        <span style={{ fontSize: 16 }}>⚠</span>
-        <span><strong>OCIMF/SIRE 2.0:</strong> Vessels with ≥3 NC days by any individual in any 30-day period are flagged for shore-side acknowledgement.</span>
-      </div>
+      {fleetView === "dashboard" ? (
+        <FleetDashboard onSelectVessel={onSelectVessel} onSelectCrew={onSelectCrew} />
+      ) : (
+        <>
+          {/* OCIMF threshold legend */}
+          <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "10px 14px", marginBottom: 16, display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+            <span style={{ fontSize: 16 }}>⚠</span>
+            <span><strong>OCIMF/SIRE 2.0:</strong> Vessels with ≥3 NC days by any individual in any 30-day period are flagged for shore-side acknowledgement.</span>
+          </div>
 
-      <div style={{ background: colors.white, borderRadius: 10, border: `1px solid ${colors.border}`, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead>
-            <tr style={{ background: "#f8fafc" }}>
-              <th style={thStyle}>Vessel</th>
-              <th style={thStyle}>Regime</th>
-              <th style={{ ...thStyle, textAlign: "center" }}>Active NCs</th>
-              <th style={{ ...thStyle, textAlign: "center" }}>NC days (30d)</th>
-              <th style={{ ...thStyle, textAlign: "center" }}>Crew timesheets</th>
-              <th style={thStyle}>Location</th>
-              <th style={{ ...thStyle, textAlign: "right" }}>Last synced</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((v, i) => {
-              const isOcimf = v.ncDays30 >= 3;
-              return (
-                <tr key={v.id}
-                  onClick={() => onSelectVessel(v)}
-                  style={{ borderTop: `1px solid ${colors.border}`, cursor: "pointer", background: isOcimf ? "#fffbeb" : colors.white, transition: "background 0.15s" }}
-                  onMouseEnter={e => e.currentTarget.style.background = "#f0f9ff"}
-                  onMouseLeave={e => e.currentTarget.style.background = isOcimf ? "#fffbeb" : colors.white}
-                >
-                  <td style={tdStyle}>
-                    <div style={{ fontWeight: 600, color: colors.linkBlue }}>{v.name}</div>
-                    <div style={{ fontSize: 11, color: colors.textSecondary, marginTop: 1 }}>IMO {v.imo} &middot; {v.type}</div>
-                  </td>
-                  <td style={tdStyle}>
-                    <span style={{ fontSize: 12 }}>{v.regime}</span>
-                    {v.manila && <span style={{ display: "inline-block", marginLeft: 4, padding: "1px 5px", borderRadius: 4, fontSize: 10, fontWeight: 600, background: colors.amberBg, color: colors.manilaAmber }}>+Manila</span>}
-                    {v.opa90 && <span style={{ display: "inline-block", marginLeft: 4, padding: "1px 5px", borderRadius: 4, fontSize: 10, fontWeight: 600, background: "#dbeafe", color: colors.blue }}>+OPA-90</span>}
-                  </td>
-                  <td style={{ ...tdStyle, textAlign: "center" }}>
-                    {v.activeNCs > 0 ? (
-                      <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: "50%", background: colors.redBg, color: colors.red, fontWeight: 700, fontSize: 13 }}>{v.activeNCs}</span>
-                    ) : (
-                      <span style={{ color: colors.green }}>—</span>
-                    )}
-                  </td>
-                  <td style={{ ...tdStyle, textAlign: "center" }}>
-                    <SeverityIndicator ncDays30={v.ncDays30} />
-                  </td>
-                  <td style={{ ...tdStyle, textAlign: "center" }}>
-                    <span style={{ color: v.completeness.split("/")[0] === v.completeness.split("/")[1] ? colors.textSecondary : colors.amber, fontWeight: v.completeness.split("/")[0] === v.completeness.split("/")[1] ? 400 : 600 }}>
-                      {v.completeness}
-                    </span>
-                  </td>
-                  <td style={tdStyle}>
-                    <span style={{ fontSize: 12, color: colors.textSecondary }}>{v.location}</span>
-                  </td>
-                  <td style={{ ...tdStyle, textAlign: "right" }}>
-                    <span style={{ fontSize: 12, color: v.lastSync.includes("12h") ? colors.amber : colors.textSecondary }}>{v.lastSync}</span>
-                  </td>
+          <div style={{ background: colors.white, borderRadius: 10, border: `1px solid ${colors.border}`, overflow: "hidden" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: "#f8fafc" }}>
+                  <th style={thStyle}>Vessel</th>
+                  <th style={thStyle}>Regime</th>
+                  <th style={{ ...thStyle, textAlign: "center" }}>Active NCs</th>
+                  <th style={{ ...thStyle, textAlign: "center" }}>NC days (30d)</th>
+                  <th style={{ ...thStyle, textAlign: "center" }}>Crew timesheets</th>
+                  <th style={thStyle}>Location</th>
+                  <th style={{ ...thStyle, textAlign: "right" }}>Last synced</th>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+              </thead>
+              <tbody>
+                {sorted.map((v, i) => {
+                  const isOcimf = v.ncDays30 >= 3;
+                  return (
+                    <tr key={v.id}
+                      onClick={() => onSelectVessel(v)}
+                      style={{ borderTop: `1px solid ${colors.border}`, cursor: "pointer", background: isOcimf ? "#fffbeb" : colors.white, transition: "background 0.15s" }}
+                      onMouseEnter={e => e.currentTarget.style.background = "#f0f9ff"}
+                      onMouseLeave={e => e.currentTarget.style.background = isOcimf ? "#fffbeb" : colors.white}
+                    >
+                      <td style={tdStyle}>
+                        <div style={{ fontWeight: 600, color: colors.linkBlue }}>{v.name}</div>
+                        <div style={{ fontSize: 11, color: colors.textSecondary, marginTop: 1 }}>IMO {v.imo} &middot; {v.type}</div>
+                      </td>
+                      <td style={tdStyle}>
+                        <span style={{ fontSize: 12 }}>{v.regime}</span>
+                        {v.manila && <span style={{ display: "inline-block", marginLeft: 4, padding: "1px 5px", borderRadius: 4, fontSize: 10, fontWeight: 600, background: colors.amberBg, color: colors.manilaAmber }}>+Manila</span>}
+                        {v.opa90 && <span style={{ display: "inline-block", marginLeft: 4, padding: "1px 5px", borderRadius: 4, fontSize: 10, fontWeight: 600, background: "#dbeafe", color: colors.blue }}>+OPA-90</span>}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: "center" }}>
+                        {v.activeNCs > 0 ? (
+                          <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: "50%", background: colors.redBg, color: colors.red, fontWeight: 700, fontSize: 13 }}>{v.activeNCs}</span>
+                        ) : (
+                          <span style={{ color: colors.green }}>—</span>
+                        )}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: "center" }}>
+                        <SeverityIndicator ncDays30={v.ncDays30} />
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: "center" }}>
+                        <span style={{ color: v.completeness.split("/")[0] === v.completeness.split("/")[1] ? colors.textSecondary : colors.amber, fontWeight: v.completeness.split("/")[0] === v.completeness.split("/")[1] ? 400 : 600 }}>
+                          {v.completeness}
+                        </span>
+                      </td>
+                      <td style={tdStyle}>
+                        <span style={{ fontSize: 12, color: colors.textSecondary }}>{v.location}</span>
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: "right" }}>
+                        <span style={{ fontSize: 12, color: v.lastSync.includes("12h") ? colors.amber : colors.textSecondary }}>{v.lastSync}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -1005,6 +1299,7 @@ export default function App() {
   const [selectedVessel, setSelectedVessel] = useState(null);
   const [selectedCrew, setSelectedCrew] = useState(null);
   const [acknowledgements, setAcknowledgements] = useState([]);
+  const [fleetView, setFleetView] = useState("table");
 
   const handleAcknowledge = (ack) => setAcknowledgements(prev => [...prev, ack]);
 
@@ -1059,7 +1354,12 @@ export default function App() {
         {/* Content */}
         <div style={{ padding: "0 24px 40px" }}>
           {screen === "fleet" && (
-            <FleetOverview onSelectVessel={v => { setSelectedVessel(v); setScreen("vessel"); }} />
+            <FleetOverview
+              onSelectVessel={v => { setSelectedVessel(v); setScreen("vessel"); }}
+              onSelectCrew={(v, c) => { setSelectedVessel(v); setSelectedCrew(c); setScreen("seafarer"); }}
+              fleetView={fleetView}
+              setFleetView={setFleetView}
+            />
           )}
           {screen === "vessel" && selectedVessel && (
             <VesselDetail
