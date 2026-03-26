@@ -536,7 +536,7 @@ function FleetOverview({ onSelectVessel }) {
 }
 
 /* ─── SCREEN 2: Vessel Detail ─── */
-function VesselDetail({ vessel, onBack, onSelectCrew }) {
+function VesselDetail({ vessel, onBack, onSelectCrew, acknowledgements, onAcknowledge }) {
   const vesselData = VESSEL_DATA.find(v => v.id === vessel.id);
   const crew = vesselData.crew;
   const departments = ["Top Four", "Deck", "Engine", "Catering"].filter(d => crew.some(c => c.dept === d));
@@ -573,14 +573,56 @@ function VesselDetail({ vessel, onBack, onSelectCrew }) {
       </div>
 
       {/* OCIMF alert */}
-      {ncCrew.length > 0 && (
-        <div style={{ background: colors.redLight, border: `1px solid #fecaca`, borderRadius: 8, padding: "12px 16px", marginBottom: 16, fontSize: 13 }}>
-          <div style={{ fontWeight: 700, color: colors.red, marginBottom: 4 }}>⚠ Shore-side acknowledgement required</div>
-          <div style={{ color: "#991b1b" }}>
-            {ncCrew.map(c => c.name).join(", ")} {ncCrew.length === 1 ? "has" : "have"} ≥3 NC days in the last 30 days. Per OCIMF SIRE 2.0 guidance, this must be acknowledged by shore management.
+      {ncCrew.length > 0 && (() => {
+        const ncCrewStatuses = ncCrew.map(c => {
+          const tsKey = `${vessel.id}-${c.id}`;
+          const tsData = CREW_TIMESHEETS.get(tsKey);
+          const status = getAckStatus(c.id, tsData ? tsData.displayDays : [], acknowledgements);
+          return { ...c, ackStatus: status };
+        });
+        const pendingCrew = ncCrewStatuses.filter(c => c.ackStatus.needsAcknowledgement);
+        const ackedCrew = ncCrewStatuses.filter(c => !c.ackStatus.needsAcknowledgement && c.ackStatus.latestAck);
+        const allAcked = pendingCrew.length === 0 && ackedCrew.length > 0;
+
+        const formatAckDate = (iso) => {
+          const d = new Date(iso);
+          const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+          return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
+        };
+
+        return (
+          <div style={{ background: allAcked ? colors.greenLight : colors.redLight, border: `1px solid ${allAcked ? colors.greenBg : "#fecaca"}`, borderRadius: 8, padding: "12px 16px", marginBottom: 16, fontSize: 13 }}>
+            {allAcked ? (
+              <>
+                <div style={{ fontWeight: 700, color: colors.green, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 14 }}>✓</span> All non-compliance acknowledged
+                </div>
+                {ackedCrew.map(c => (
+                  <div key={c.id} style={{ color: "#166534", fontSize: 12, padding: "2px 0" }}>
+                    {c.name} — {c.ackStatus.latestAck.acknowledgedBy}, {formatAckDate(c.ackStatus.latestAck.acknowledgedAt)}
+                  </div>
+                ))}
+              </>
+            ) : (
+              <>
+                <div style={{ fontWeight: 700, color: colors.red, marginBottom: 4 }}>⚠ Shore-side acknowledgement required</div>
+                <div style={{ color: "#991b1b", marginBottom: ackedCrew.length > 0 ? 8 : 0 }}>
+                  {pendingCrew.map(c => c.name).join(", ")} {pendingCrew.length === 1 ? "has" : "have"} ≥3 NC days in the last 30 days. Per OCIMF SIRE 2.0 guidance, select each crew member to review and acknowledge.
+                </div>
+                {ackedCrew.length > 0 && (
+                  <div style={{ borderTop: "1px solid #fecaca", paddingTop: 8 }}>
+                    {ackedCrew.map(c => (
+                      <div key={c.id} style={{ color: colors.green, fontSize: 12, padding: "2px 0", display: "flex", alignItems: "center", gap: 4 }}>
+                        <span>✓</span> {c.name} — Acknowledged by {c.ackStatus.latestAck.acknowledgedBy}, {formatAckDate(c.ackStatus.latestAck.acknowledgedAt)}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Crew roster by department */}
       {departments.map(dept => (
@@ -609,12 +651,20 @@ function VesselDetail({ vessel, onBack, onSelectCrew }) {
                 </tr>
               </thead>
               <tbody>
-                {crew.filter(c => c.dept === dept).map((c, i) => (
+                {crew.filter(c => c.dept === dept).map((c, i) => {
+                  const rowBg = (() => {
+                    if (c.ncDays30 < 3) return colors.white;
+                    const tsKey = `${vessel.id}-${c.id}`;
+                    const tsData = CREW_TIMESHEETS.get(tsKey);
+                    const status = getAckStatus(c.id, tsData ? tsData.displayDays : [], acknowledgements);
+                    return status.needsAcknowledgement ? "#fffbeb" : colors.greenLight;
+                  })();
+                  return (
                   <tr key={c.id}
                     onClick={() => onSelectCrew(c)}
-                    style={{ borderTop: `1px solid ${colors.border}`, cursor: "pointer", background: c.ncDays30 >= 3 ? "#fffbeb" : colors.white, transition: "background 0.15s" }}
+                    style={{ borderTop: `1px solid ${colors.border}`, cursor: "pointer", background: rowBg, transition: "background 0.15s" }}
                     onMouseEnter={e => e.currentTarget.style.background = "#f0f9ff"}
-                    onMouseLeave={e => e.currentTarget.style.background = c.ncDays30 >= 3 ? "#fffbeb" : colors.white}
+                    onMouseLeave={e => e.currentTarget.style.background = rowBg}
                   >
                     <td style={tdStyle}>
                       <div style={{ fontWeight: 600, color: colors.linkBlue }}>{c.name}</div>
@@ -627,7 +677,8 @@ function VesselDetail({ vessel, onBack, onSelectCrew }) {
                     <td style={{ ...tdStyle, textAlign: "center", color: parseFloat(c.workToday) >= 14 ? colors.red : colors.textSecondary, fontWeight: parseFloat(c.workToday) >= 14 ? 600 : 400 }}>{c.workToday}</td>
                     <td style={{ ...tdStyle, textAlign: "right", color: c.lastEntry === "Today" ? colors.textSecondary : colors.amber }}>{c.lastEntry}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -638,13 +689,14 @@ function VesselDetail({ vessel, onBack, onSelectCrew }) {
 }
 
 /* ─── SCREEN 3: Seafarer Detail ─── */
-function SeafarerDetail({ crew, vessel, onBack }) {
+function SeafarerDetail({ crew, vessel, onBack, acknowledgements, onAcknowledge }) {
   const [selectedDay, setSelectedDay] = useState(0);
   const tsKey = `${vessel.id}-${crew.id}`;
   const tsData = CREW_TIMESHEETS.get(tsKey);
   const timesheetDays = tsData.displayDays;
   const summary = tsData.summary;
   const ganttPeriods = timesheetDays[selectedDay].ganttPeriods;
+  const ackStatus = getAckStatus(crew.id, timesheetDays, acknowledgements);
 
   return (
     <div>
@@ -678,6 +730,17 @@ function SeafarerDetail({ crew, vessel, onBack }) {
           <div style={{ fontSize: 11, color: colors.textSecondary }}>Required: ≥77h</div>
         </div>
       </div>
+
+      {/* Acknowledgement panel */}
+      {summary.ncDays30 >= 3 && (
+        <AcknowledgementPanel
+          vesselId={vessel.id}
+          crew={crew}
+          displayDays={timesheetDays}
+          acknowledgements={acknowledgements}
+          onAcknowledge={onAcknowledge}
+        />
+      )}
 
       {/* 24h hour-grid timeline */}
       <div style={{ background: colors.white, borderRadius: 10, border: `1px solid ${colors.border}`, marginBottom: 20, overflow: "hidden" }}>
@@ -776,11 +839,157 @@ function SeafarerDetail({ crew, vessel, onBack }) {
                 <td style={{ ...tdStyle, textAlign: "center" }}><Chip type={t.daily} /></td>
                 <td style={{ ...tdStyle, textAlign: "center" }}><Chip type={t.weekly} /></td>
                 <td style={{ ...tdStyle, textAlign: "center" }}><Chip type={t.intervals} /></td>
-                <td style={{ ...tdStyle, color: t.reason ? colors.text : colors.textSecondary, fontStyle: t.reason ? "normal" : "italic" }}>{t.reason || "—"}</td>
+                <td style={{ ...tdStyle, color: t.reason ? colors.text : colors.textSecondary, fontStyle: t.reason ? "normal" : "italic" }}>
+                  {t.reason || "—"}
+                  {t.reason && ackStatus.ackedDateSet.has(t.date) && (
+                    <span style={{ display: "inline-block", marginLeft: 6, padding: "1px 6px", borderRadius: 8, fontSize: 10, fontWeight: 600, background: colors.greenBg, color: colors.green, fontStyle: "normal" }}>Ack'd</span>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Acknowledgement helper ─── */
+function getAckStatus(crewId, displayDays, acknowledgements) {
+  const crewAcks = acknowledgements.filter(a => a.crewId === crewId);
+  const ackedDateSet = new Set(crewAcks.flatMap(a => a.ncDates));
+  const ncDays = displayDays.filter(d => d.daily === "fail" || d.intervals === "fail");
+  const unacked = ncDays.filter(d => !ackedDateSet.has(d.date));
+  const acked = ncDays.filter(d => ackedDateSet.has(d.date));
+  const latestAck = crewAcks.length > 0 ? crewAcks[crewAcks.length - 1] : null;
+  return { crewAcks, ackedDateSet, unacked, acked, latestAck, needsAcknowledgement: unacked.length > 0 };
+}
+
+/* ─── Acknowledgement Panel ─── */
+function AcknowledgementPanel({ vesselId, crew, displayDays, acknowledgements, onAcknowledge }) {
+  const ncDays = displayDays.filter(d => d.daily === "fail" || d.intervals === "fail");
+  const { ackedDateSet, unacked, latestAck, needsAcknowledgement } = getAckStatus(crew.id, displayDays, acknowledgements);
+  const [selectedDates, setSelectedDates] = useState(() => new Set(unacked.map(d => d.date)));
+  const [comment, setComment] = useState("");
+
+  const toggleDate = (date) => {
+    setSelectedDates(prev => {
+      const next = new Set(prev);
+      if (next.has(date)) next.delete(date); else next.add(date);
+      return next;
+    });
+  };
+
+  const handleAcknowledge = () => {
+    if (selectedDates.size === 0) return;
+    onAcknowledge({
+      id: Date.now(),
+      vesselId,
+      crewId: crew.id,
+      acknowledgedBy: "Kate Morrison",
+      acknowledgedAt: new Date().toISOString(),
+      ncDates: [...selectedDates],
+      comment: comment.trim(),
+    });
+    setSelectedDates(new Set());
+    setComment("");
+  };
+
+  const formatAckTime = (iso) => {
+    const d = new Date(iso);
+    const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}, ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+  };
+
+  // All NC days acknowledged
+  if (!needsAcknowledgement && latestAck) {
+    return (
+      <div style={{ background: colors.greenLight, border: `1px solid ${colors.greenBg}`, borderRadius: 8, padding: "14px 16px", marginBottom: 20, fontSize: 13 }}>
+        <div style={{ fontWeight: 700, color: colors.green, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 15 }}>✓</span> Acknowledged
+        </div>
+        <div style={{ color: "#166534", marginBottom: 4 }}>
+          {ncDays.length} NC day{ncDays.length !== 1 ? "s" : ""} acknowledged by {latestAck.acknowledgedBy}
+        </div>
+        <div style={{ color: "#166534", fontSize: 12, marginBottom: latestAck.comment ? 8 : 0 }}>
+          {formatAckTime(latestAck.acknowledgedAt)}
+        </div>
+        {latestAck.comment && (
+          <div style={{ color: "#166534", fontSize: 12, fontStyle: "italic", borderTop: `1px solid ${colors.greenBg}`, paddingTop: 8, marginTop: 4 }}>
+            "{latestAck.comment}"
+          </div>
+        )}
+        <div style={{ color: "#166534", fontSize: 11, marginTop: 8 }}>
+          Covers: {ncDays.map(d => d.date).join(", ")}
+        </div>
+      </div>
+    );
+  }
+
+  // Needs acknowledgement
+  return (
+    <div style={{ background: colors.redLight, border: `1px solid #fecaca`, borderRadius: 8, padding: "14px 16px", marginBottom: 20, fontSize: 13 }}>
+      <div style={{ fontWeight: 700, color: colors.red, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+        <span style={{ fontSize: 15 }}>⚠</span> Shore-side acknowledgement required
+      </div>
+      <div style={{ color: "#991b1b", marginBottom: 12 }}>
+        {unacked.length} NC day{unacked.length !== 1 ? "s" : ""} in the last 30 days require acknowledgement.
+      </div>
+
+      {/* Unacknowledged NC days */}
+      <div style={{ marginBottom: 12 }}>
+        {unacked.map(d => (
+          <label key={d.date} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", cursor: "pointer", color: "#991b1b" }}>
+            <input
+              type="checkbox"
+              checked={selectedDates.has(d.date)}
+              onChange={() => toggleDate(d.date)}
+              style={{ accentColor: colors.red }}
+            />
+            <span style={{ fontWeight: 500 }}>{d.date}</span>
+            <span style={{ color: "#b91c1c" }}>— Rest {d.rest}</span>
+            {d.reason && <span style={{ color: "#b91c1c" }}>— {d.reason}</span>}
+          </label>
+        ))}
+      </div>
+
+      {/* Previously acknowledged NC days */}
+      {ackedDateSet.size > 0 && (
+        <div style={{ marginBottom: 12, paddingTop: 8, borderTop: "1px solid #fecaca" }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: "#991b1b", marginBottom: 4 }}>Previously acknowledged:</div>
+          {ncDays.filter(d => ackedDateSet.has(d.date)).map(d => (
+            <div key={d.date} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0", color: colors.green, fontSize: 12 }}>
+              <span>✓</span> {d.date} — Rest {d.rest}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Comment */}
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 11, color: "#991b1b", marginBottom: 4 }}>Comment (optional):</div>
+        <textarea
+          value={comment}
+          onChange={e => setComment(e.target.value)}
+          placeholder="Add corrective actions or notes..."
+          style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: "1px solid #fecaca", fontSize: 12, fontFamily: "inherit", resize: "vertical", minHeight: 48, boxSizing: "border-box", background: "#fff" }}
+        />
+      </div>
+
+      {/* Footer */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontSize: 12, color: "#991b1b" }}>Acknowledging as: <strong>Kate Morrison</strong></span>
+        <button
+          onClick={handleAcknowledge}
+          disabled={selectedDates.size === 0}
+          style={{
+            background: selectedDates.size === 0 ? "#d1d5db" : colors.primaryBtn,
+            color: "#fff", border: "none", padding: "8px 20px", borderRadius: 6, fontSize: 13, fontWeight: 600,
+            cursor: selectedDates.size === 0 ? "not-allowed" : "pointer",
+          }}
+        >
+          Acknowledge ({selectedDates.size})
+        </button>
       </div>
     </div>
   );
@@ -795,6 +1004,9 @@ export default function App() {
   const [screen, setScreen] = useState("fleet");
   const [selectedVessel, setSelectedVessel] = useState(null);
   const [selectedCrew, setSelectedCrew] = useState(null);
+  const [acknowledgements, setAcknowledgements] = useState([]);
+
+  const handleAcknowledge = (ack) => setAcknowledgements(prev => [...prev, ack]);
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", color: colors.text }}>
@@ -854,6 +1066,8 @@ export default function App() {
               vessel={selectedVessel}
               onBack={() => { setScreen("fleet"); setSelectedVessel(null); }}
               onSelectCrew={c => { setSelectedCrew(c); setScreen("seafarer"); }}
+              acknowledgements={acknowledgements}
+              onAcknowledge={handleAcknowledge}
             />
           )}
           {screen === "seafarer" && selectedCrew && selectedVessel && (
@@ -861,6 +1075,8 @@ export default function App() {
               crew={selectedCrew}
               vessel={selectedVessel}
               onBack={() => { setScreen("vessel"); setSelectedCrew(null); }}
+              acknowledgements={acknowledgements}
+              onAcknowledge={handleAcknowledge}
             />
           )}
         </div>
