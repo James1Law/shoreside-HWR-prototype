@@ -727,7 +727,7 @@ function SeafarerDetail({ crew, vessel, onBack }) {
                       {isDrill ? "Drill" : "Work"}
                     </div>
                     <div style={{ fontSize: 10, color: colors.textSecondary, whiteSpace: "nowrap" }}>
-                      {String(p.start).padStart(2, "0")}:00 – {String(p.end).padStart(2, "0")}:00 · {p.end - p.start}h
+                      {String(Math.floor(p.start)).padStart(2, "0")}:{String(Math.round((p.start % 1) * 60)).padStart(2, "0")} – {String(Math.floor(p.end)).padStart(2, "0")}:{String(Math.round((p.end % 1) * 60)).padStart(2, "0")} · {p.end - p.start}h
                     </div>
                   </div>
                 );
