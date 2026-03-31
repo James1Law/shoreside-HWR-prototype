@@ -76,14 +76,14 @@ const NC_REASONS = [
 
 /* ─── Vessel profiles (static identity + story config) ─── */
 const VESSEL_PROFILES = [
-  { id: 1, name: "MV Pacific Voyager", imo: "9876543", type: "Bulk Carrier", regime: "STCW Core", manila: false, opa90: false, crewSize: 22, lastSync: "2h ago", location: "At Sea — South China Sea", problemCrew: 2, borderlineCrew: 4, missingEntries: 1 },
-  { id: 2, name: "MT Coral Stream", imo: "9812345", type: "Oil Tanker", regime: "STCW Core", manila: true, opa90: true, crewSize: 27, lastSync: "45m ago", location: "Houston, TX — US Waters", problemCrew: 1, borderlineCrew: 3, missingEntries: 0 },
-  { id: 3, name: "MV Northern Spirit", imo: "9823456", type: "Container", regime: "MLC-A", manila: false, opa90: false, crewSize: 24, lastSync: "1h ago", location: "Rotterdam", problemCrew: 0, borderlineCrew: 2, missingEntries: 2 },
-  { id: 4, name: "MV Atlas Pioneer", imo: "9834567", type: "Bulk Carrier", regime: "STCW Core", manila: true, opa90: false, crewSize: 21, lastSync: "3h ago", location: "Singapore Strait", problemCrew: 0, borderlineCrew: 3, missingEntries: 1 },
-  { id: 5, name: "MT Sea Falcon", imo: "9845678", type: "Chemical Tanker", regime: "MLC-B", manila: false, opa90: false, crewSize: 25, lastSync: "30m ago", location: "At Sea — Mediterranean", problemCrew: 0, borderlineCrew: 1, missingEntries: 0 },
-  { id: 6, name: "MV Cape Hector", imo: "9856789", type: "Container", regime: "STCW Core", manila: false, opa90: false, crewSize: 23, lastSync: "6h ago", location: "Piraeus", problemCrew: 1, borderlineCrew: 3, missingEntries: 3 },
-  { id: 7, name: "MV Ocean Grace", imo: "9867890", type: "General Cargo", regime: "STCW Core", manila: false, opa90: false, crewSize: 18, lastSync: "12h ago", location: "At Sea — Indian Ocean", problemCrew: 0, borderlineCrew: 1, missingEntries: 3 },
-  { id: 8, name: "MT Dawn Carrier", imo: "9878901", type: "Oil Tanker", regime: "STCW Core", manila: true, opa90: false, crewSize: 27, lastSync: "2h ago", location: "Fujairah", problemCrew: 0, borderlineCrew: 2, missingEntries: 1 },
+  { id: 1, name: "MV Pacific Voyager", imo: "9876543", type: "Bulk Carrier", regime: "STCW", manila: false, opa90: false, crewSize: 22, lastSync: "2h ago", location: "At Sea", problemCrew: 2, borderlineCrew: 4, missingEntries: 1 },
+  { id: 2, name: "MT Coral Stream", imo: "9812345", type: "Oil Tanker", regime: "STCW", manila: true, opa90: true, crewSize: 27, lastSync: "45m ago", location: "Houston, TX — US Waters", problemCrew: 1, borderlineCrew: 3, missingEntries: 0 },
+  { id: 3, name: "MV Northern Spirit", imo: "9823456", type: "Container", regime: "MLC A", manila: false, opa90: false, crewSize: 24, lastSync: "1h ago", location: "Rotterdam", problemCrew: 0, borderlineCrew: 2, missingEntries: 2 },
+  { id: 4, name: "MV Atlas Pioneer", imo: "9834567", type: "Bulk Carrier", regime: "STCW", manila: true, opa90: false, crewSize: 21, lastSync: "3h ago", location: "Singapore Strait", problemCrew: 0, borderlineCrew: 3, missingEntries: 1 },
+  { id: 5, name: "MT Sea Falcon", imo: "9845678", type: "Chemical Tanker", regime: "MLC B", manila: false, opa90: false, crewSize: 25, lastSync: "30m ago", location: "At Sea", problemCrew: 0, borderlineCrew: 1, missingEntries: 0 },
+  { id: 6, name: "MV Cape Hector", imo: "9856789", type: "Container", regime: "STCW", manila: false, opa90: false, crewSize: 23, lastSync: "6h ago", location: "Piraeus", problemCrew: 1, borderlineCrew: 3, missingEntries: 3 },
+  { id: 7, name: "MV Ocean Grace", imo: "9867890", type: "General Cargo", regime: "STCW", manila: false, opa90: false, crewSize: 18, lastSync: "12h ago", location: "At Sea", problemCrew: 0, borderlineCrew: 1, missingEntries: 3 },
+  { id: 8, name: "MT Dawn Carrier", imo: "9878901", type: "Oil Tanker", regime: "STCW", manila: true, opa90: false, crewSize: 27, lastSync: "2h ago", location: "Fujairah", problemCrew: 0, borderlineCrew: 2, missingEntries: 1 },
 ];
 
 /* ─── Date helper ─── */
