@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Routes, Route, Navigate, useParams, useNavigate, useLocation, Link } from "react-router-dom";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    DATA LAYER — seeded PRNG, pools, generators, compliance computation
@@ -75,14 +76,14 @@ const NC_REASONS = [
 
 /* ─── Vessel profiles (static identity + story config) ─── */
 const VESSEL_PROFILES = [
-  { id: 1, name: "MV Pacific Voyager", imo: "9876543", type: "Bulk Carrier", regime: "STCW Core", manila: false, opa90: false, crewSize: 22, lastSync: "2h ago", location: "At Sea — South China Sea", problemCrew: 2, borderlineCrew: 4, missingEntries: 0 },
+  { id: 1, name: "MV Pacific Voyager", imo: "9876543", type: "Bulk Carrier", regime: "STCW Core", manila: false, opa90: false, crewSize: 22, lastSync: "2h ago", location: "At Sea — South China Sea", problemCrew: 2, borderlineCrew: 4, missingEntries: 1 },
   { id: 2, name: "MT Coral Stream", imo: "9812345", type: "Oil Tanker", regime: "STCW Core", manila: true, opa90: true, crewSize: 27, lastSync: "45m ago", location: "Houston, TX — US Waters", problemCrew: 1, borderlineCrew: 3, missingEntries: 0 },
-  { id: 3, name: "MV Northern Spirit", imo: "9823456", type: "Container", regime: "MLC-A", manila: false, opa90: false, crewSize: 24, lastSync: "1h ago", location: "Rotterdam", problemCrew: 0, borderlineCrew: 2, missingEntries: 0 },
+  { id: 3, name: "MV Northern Spirit", imo: "9823456", type: "Container", regime: "MLC-A", manila: false, opa90: false, crewSize: 24, lastSync: "1h ago", location: "Rotterdam", problemCrew: 0, borderlineCrew: 2, missingEntries: 2 },
   { id: 4, name: "MV Atlas Pioneer", imo: "9834567", type: "Bulk Carrier", regime: "STCW Core", manila: true, opa90: false, crewSize: 21, lastSync: "3h ago", location: "Singapore Strait", problemCrew: 0, borderlineCrew: 3, missingEntries: 1 },
   { id: 5, name: "MT Sea Falcon", imo: "9845678", type: "Chemical Tanker", regime: "MLC-B", manila: false, opa90: false, crewSize: 25, lastSync: "30m ago", location: "At Sea — Mediterranean", problemCrew: 0, borderlineCrew: 1, missingEntries: 0 },
-  { id: 6, name: "MV Cape Hector", imo: "9856789", type: "Container", regime: "STCW Core", manila: false, opa90: false, crewSize: 23, lastSync: "6h ago", location: "Piraeus", problemCrew: 1, borderlineCrew: 3, missingEntries: 2 },
-  { id: 7, name: "MV Ocean Grace", imo: "9867890", type: "General Cargo", regime: "STCW Core", manila: false, opa90: false, crewSize: 18, lastSync: "12h ago", location: "At Sea — Indian Ocean", problemCrew: 0, borderlineCrew: 1, missingEntries: 2 },
-  { id: 8, name: "MT Dawn Carrier", imo: "9878901", type: "Oil Tanker", regime: "STCW Core", manila: true, opa90: false, crewSize: 27, lastSync: "2h ago", location: "Fujairah", problemCrew: 0, borderlineCrew: 2, missingEntries: 0 },
+  { id: 6, name: "MV Cape Hector", imo: "9856789", type: "Container", regime: "STCW Core", manila: false, opa90: false, crewSize: 23, lastSync: "6h ago", location: "Piraeus", problemCrew: 1, borderlineCrew: 3, missingEntries: 3 },
+  { id: 7, name: "MV Ocean Grace", imo: "9867890", type: "General Cargo", regime: "STCW Core", manila: false, opa90: false, crewSize: 18, lastSync: "12h ago", location: "At Sea — Indian Ocean", problemCrew: 0, borderlineCrew: 1, missingEntries: 3 },
+  { id: 8, name: "MT Dawn Carrier", imo: "9878901", type: "Oil Tanker", regime: "STCW Core", manila: true, opa90: false, crewSize: 27, lastSync: "2h ago", location: "Fujairah", problemCrew: 0, borderlineCrew: 2, missingEntries: 1 },
 ];
 
 /* ─── Date helper ─── */
@@ -334,8 +335,12 @@ VESSEL_PROFILES.forEach(vp => {
 
     CREW_TIMESHEETS.set(`${vp.id}-${c.id}`, { displayDays, summary });
 
-    const isMissing = idx >= vp.crewSize - vp.missingEntries;
-    const lastEntry = isMissing ? "Yesterday" : "Today";
+    const missingIdx = vp.crewSize - vp.missingEntries;
+    const isMissing = idx >= missingIdx;
+    // Vary last entry labels for missing crew: "Yesterday", "2 days ago", "3 days ago"
+    const missingOffset = idx - missingIdx; // 0, 1, 2, ...
+    const lastEntryLabels = ["Yesterday", "2 days ago", "3 days ago"];
+    const lastEntry = isMissing ? (lastEntryLabels[missingOffset] || lastEntryLabels[lastEntryLabels.length - 1]) : "Today";
     if (!isMissing) loggedToday++;
 
     if (summary.daily24hCurrent === "fail" || summary.weekly7dCurrent === "fail") activeNCs++;
@@ -347,8 +352,8 @@ VESSEL_PROFILES.forEach(vp => {
       weekly7d: summary.weekly7dCurrent,
       ncDays30: summary.ncDays30,
       lastEntry,
-      restToday: allDays[0].restH.toFixed(1) + "h",
-      workToday: allDays[0].workH.toFixed(1) + "h",
+      rest24h: isMissing ? null : allDays[0].restH.toFixed(1) + "h",
+      work24h: isMissing ? null : allDays[0].workH.toFixed(1) + "h",
     };
   });
 
@@ -377,6 +382,8 @@ function computeDashboardMetrics() {
   const locationCounts = {};
   const vesselTypeCounts = {};
   const deptCounts = {};
+  const deptRecent = {};  // NC counts days 0-4 per department
+  const deptPrior = {};   // NC counts days 5-9 per department
   const trendByDay = Array.from({ length: DISPLAY_DAYS }, () => 0);
   const allCrew = [];
 
@@ -386,7 +393,7 @@ function computeDashboardMetrics() {
       totalCrew++;
       totalNcDaysFleet30d += c.ncDays30;
       vesselNcSum += c.ncDays30;
-      restSum += parseFloat(c.restToday);
+      if (c.rest24h) restSum += parseFloat(c.rest24h);
       if (c.daily24h === "fail" || c.weekly7d === "fail") totalNcCrewToday++;
 
       // Department
@@ -398,7 +405,11 @@ function computeDashboardMetrics() {
       if (tsData) {
         tsData.displayDays.forEach((d, i) => {
           if (d.reason) reasonCounts[d.reason] = (reasonCounts[d.reason] || 0) + 1;
-          if (d.daily === "fail" || d.intervals === "fail") trendByDay[i]++;
+          if (d.daily === "fail" || d.intervals === "fail") {
+            trendByDay[i]++;
+            if (i < 5) deptRecent[c.dept] = (deptRecent[c.dept] || 0) + 1;
+            else deptPrior[c.dept] = (deptPrior[c.dept] || 0) + 1;
+          }
         });
       }
 
@@ -416,6 +427,105 @@ function computeDashboardMetrics() {
 
   const ocimfFlaggedVessels = VESSEL_DATA.filter(v => v.crew.some(c => c.ncDays30 >= 3)).length;
 
+  // ─── Watch list: crew with NC history, enriched with timelines and trends ───
+  const watchListCrew = allCrew
+    .filter(c => c.ncDays30 > 0)
+    .map(c => {
+      const tsData = CREW_TIMESHEETS.get(`${c.vesselId}-${c.id}`);
+      const days = tsData ? tsData.displayDays : [];
+      const timeline = days.map(d => ({ date: d.date, status: d.daily, restH: d.restH, reason: d.reason }));
+
+      const recentNcCount = days.slice(0, 5).filter(d => d.daily === "fail").length;
+      const priorNcCount = days.slice(5, 10).filter(d => d.daily === "fail").length;
+      const trend = recentNcCount > priorNcCount ? "worsening" : recentNcCount < priorNcCount ? "improving" : "stable";
+      const concernScore = (c.ncDays30 * 2) + (recentNcCount * 3) + (trend === "worsening" ? 5 : 0);
+
+      // Consecutive fail streak from most recent day
+      let streak = 0;
+      for (let i = 0; i < days.length; i++) {
+        if (days[i].daily === "fail") streak++;
+        else break;
+      }
+      const failsIn5 = recentNcCount;
+      const streakDesc = streak >= 2
+        ? `${streak} consecutive NC days`
+        : failsIn5 >= 2 ? `${failsIn5} of last 5 days` : "1 NC in last 5 days";
+
+      // Most frequent reason
+      const reasonFreq = {};
+      days.forEach(d => { if (d.reason) reasonFreq[d.reason] = (reasonFreq[d.reason] || 0) + 1; });
+      const topReason = Object.entries(reasonFreq).sort((a, b) => b[1] - a[1])[0];
+
+      return {
+        ...c, timeline, trend, concernScore, recentNcCount, priorNcCount,
+        streakDesc, topReason: topReason ? topReason[0] : null, streak,
+      };
+    })
+    .sort((a, b) => b.concernScore - a.concernScore);
+
+  // ─── Fleet insights: auto-generated plain-English observations ───
+  const fleetInsights = [];
+
+  // 1. Vessel cluster: multiple crew on same vessel with recent NCs
+  const vesselRecentCounts = {};
+  watchListCrew.forEach(c => {
+    if (c.recentNcCount >= 3) vesselRecentCounts[c.vesselName] = (vesselRecentCounts[c.vesselName] || 0) + 1;
+  });
+  Object.entries(vesselRecentCounts).forEach(([vName, count]) => {
+    if (count >= 2) fleetInsights.push({
+      category: "VESSEL PATTERN", accent: "#ef4444",
+      text: `${count} crew on ${vName} have had NCs on 3+ of the last 5 days — possible systemic scheduling issue`,
+      severity: count * 3,
+    });
+  });
+
+  // 2. Dominant reason
+  const ncByReason = Object.entries(reasonCounts).sort((a, b) => b[1] - a[1]);
+  const totalReasons = Object.values(reasonCounts).reduce((s, v) => s + v, 0);
+  if (ncByReason.length > 0 && totalReasons > 0) {
+    const pct = Math.round((ncByReason[0][1] / totalReasons) * 100);
+    if (pct >= 30) fleetInsights.push({
+      category: "ROOT CAUSE", accent: "#f59e0b",
+      text: `"${ncByReason[0][0]}" accounts for ${pct}% of all NCs in the last 10 days — consider reviewing related procedures`,
+      severity: pct >= 40 ? 8 : 5,
+    });
+  }
+
+  // 3. Department trend
+  Object.keys(deptCounts).forEach(dept => {
+    const recent = deptRecent[dept] || 0;
+    const prior = deptPrior[dept] || 0;
+    if (prior > 0 && recent > prior * 1.4) {
+      const pct = Math.round(((recent - prior) / prior) * 100);
+      fleetInsights.push({
+        category: "TREND", accent: "#f59e0b",
+        text: `${dept} department NCs are up ${pct}% in the last 5 days compared to the prior 5`,
+        severity: 6,
+      });
+    }
+  });
+
+  // 4. Longest active streak
+  if (watchListCrew.length > 0) {
+    const worst = watchListCrew.reduce((a, b) => a.streak > b.streak ? a : b);
+    if (worst.streak >= 3) fleetInsights.push({
+      category: "PERSON", accent: "#ef4444",
+      text: `${worst.name} (${worst.rank}, ${worst.vesselName}) has been non-compliant for ${worst.streak} consecutive days — the longest active streak in the fleet`,
+      severity: worst.streak * 2,
+    });
+  }
+
+  // 5. Improving crew (positive)
+  const improvingCount = watchListCrew.filter(c => c.trend === "improving").length;
+  if (improvingCount >= 2) fleetInsights.push({
+    category: "GOOD NEWS", accent: "#16a34a",
+    text: `${improvingCount} crew members are showing improvement — their NC frequency dropped in the last 5 days`,
+    severity: 1,
+  });
+
+  fleetInsights.sort((a, b) => b.severity - a.severity);
+  const topInsights = fleetInsights.slice(0, 4);
+
   return {
     totalCrew,
     totalNcCrewToday,
@@ -429,7 +539,9 @@ function computeDashboardMetrics() {
     ncByDepartment: Object.entries(deptCounts).map(([dept, count]) => ({ label: dept, value: count })).sort((a, b) => b.value - a.value),
     ncByRank: allCrew.reduce((acc, c) => { const key = `${c.dept}|||${c.rank}`; acc[key] = (acc[key] || 0) + c.ncDays30; return acc; }, {}),
     ncTrend: Array.from({ length: DISPLAY_DAYS }, (_, i) => ({ label: formatDate(i), value: trendByDay[i] })).reverse(),
-    worstCrew: allCrew.sort((a, b) => b.ncDays30 - a.ncDays30).slice(0, 10),
+    worstCrew: [...allCrew].sort((a, b) => b.ncDays30 - a.ncDays30).slice(0, 10),
+    watchListCrew,
+    fleetInsights: topInsights,
   };
 }
 const DASHBOARD_METRICS = computeDashboardMetrics();
@@ -612,6 +724,32 @@ function FleetDashboard({ onSelectVessel, onSelectCrew }) {
       .sort((a, b) => b.value - a.value);
   };
 
+  const handleCrewClick = (c) => {
+    const vessel = VESSEL_DATA.find(v => v.id === c.vesselId);
+    if (vessel && onSelectCrew) onSelectCrew(vessel, c);
+  };
+
+  const trendIndicator = (trend) => {
+    if (trend === "worsening") return <span style={{ color: colors.red, fontWeight: 600, fontSize: 12 }}>&#9650; Worsening</span>;
+    if (trend === "improving") return <span style={{ color: colors.green, fontWeight: 600, fontSize: 12 }}>&#9660; Improving</span>;
+    return <span style={{ color: colors.textSecondary, fontWeight: 500, fontSize: 12 }}>&#8212; Stable</span>;
+  };
+
+  const dotTimeline = (timeline) => (
+    <div style={{ display: "flex", gap: 3, alignItems: "center", justifyContent: "center" }}>
+      {[...timeline].reverse().map((d, i) => (
+        <div key={i} title={`${d.date}: ${d.restH.toFixed(1)}h rest${d.reason ? ` — ${d.reason}` : ""}`}
+          style={{
+            width: 12, height: 12, borderRadius: "50%", flexShrink: 0,
+            background: d.status === "fail" ? colors.red : d.status === "manila" ? "#f59e0b" : colors.green,
+            opacity: d.status === "pass" ? 0.5 : 0.9,
+          }} />
+      ))}
+    </div>
+  );
+
+  const heatmapCrew = m.watchListCrew.slice(0, 8);
+
   return (
     <div>
       {/* KPI cards */}
@@ -631,7 +769,24 @@ function FleetDashboard({ onSelectVessel, onSelectCrew }) {
         ))}
       </div>
 
-      {/* Row 2: By Vessel + By Reason */}
+      {/* Row 2: Fleet Insight Cards */}
+      {m.fleetInsights.length > 0 && (
+        <div style={{ display: "grid", gridTemplateColumns: m.fleetInsights.length >= 2 ? "1fr 1fr" : "1fr", gap: 12, marginBottom: 20 }}>
+          {m.fleetInsights.map((ins, i) => (
+            <div key={i} style={{
+              background: colors.white, borderRadius: 8, border: `1px solid ${colors.border}`,
+              borderLeft: `3px solid ${ins.accent}`, padding: "12px 16px",
+            }}>
+              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: colors.textSecondary, marginBottom: 6 }}>
+                {ins.category}
+              </div>
+              <div style={{ fontSize: 13, color: colors.text, lineHeight: 1.5 }}>{ins.text}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Row 3: By Vessel + By Reason */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
         <ChartPanel title="NC days by vessel (30d)">
           <HorizontalBarChart data={m.ncByVessel} colorFn={d => d.value >= 10 ? colors.red : d.value >= 3 ? colors.amber : colors.green} onClickItem={handleVesselClick} />
@@ -641,7 +796,7 @@ function FleetDashboard({ onSelectVessel, onSelectCrew }) {
         </ChartPanel>
       </div>
 
-      {/* Row 3: By Location + By Vessel Type */}
+      {/* Row 4: By Location + By Vessel Type */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
         <ChartPanel title="NC days by location (30d)">
           <HorizontalBarChart data={m.ncByLocation} barColor={colors.blue} />
@@ -651,7 +806,7 @@ function FleetDashboard({ onSelectVessel, onSelectCrew }) {
         </ChartPanel>
       </div>
 
-      {/* Row 4: Trend + By Department */}
+      {/* Row 5: Trend + By Department */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
         <ChartPanel title="Daily NC occurrences (10-day trend)">
           <TrendChart data={m.ncTrend} />
@@ -671,41 +826,88 @@ function FleetDashboard({ onSelectVessel, onSelectCrew }) {
         </ChartPanel>
       </div>
 
-      {/* Row 5: Worst crew */}
-      <ChartPanel title="Highest NC days — crew members (30d)">
+      {/* Row 6: Repeat Offender Heatmap */}
+      {heatmapCrew.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <ChartPanel title="Non-compliance patterns — top crew (10 days)">
+            <div>
+              {/* Header row */}
+              <div style={{ display: "grid", gridTemplateColumns: "140px repeat(10, 1fr) 70px", gap: 2, marginBottom: 4, paddingLeft: 0 }}>
+                <div />
+                {heatmapCrew[0].timeline.length > 0 && [...heatmapCrew[0].timeline].reverse().map((d, i) => (
+                  <div key={i} style={{ textAlign: "center", fontSize: 9, color: colors.textSecondary, fontWeight: i === 9 ? 600 : 400 }}>
+                    {d.date.replace(/ \d{4}$/, "")}
+                  </div>
+                ))}
+                <div style={{ textAlign: "center", fontSize: 9, color: colors.textSecondary, fontWeight: 600 }}>NCs</div>
+              </div>
+              {/* Crew rows */}
+              {heatmapCrew.map(c => {
+                const ncCount = c.timeline.filter(d => d.status === "fail").length;
+                return (
+                  <div key={c.id}
+                    style={{ display: "grid", gridTemplateColumns: "140px repeat(10, 1fr) 70px", gap: 2, alignItems: "center", padding: "4px 0", cursor: "pointer", borderRadius: 4, transition: "background 0.15s" }}
+                    onClick={() => handleCrewClick(c)}
+                    onMouseEnter={e => e.currentTarget.style.background = "#f0f9ff"}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                  >
+                    <div style={{ overflow: "hidden" }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: colors.linkBlue, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.name}</div>
+                      <div style={{ fontSize: 10, color: colors.textSecondary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.vesselName}</div>
+                    </div>
+                    {[...c.timeline].reverse().map((d, i) => (
+                      <div key={i} title={`${d.date}: ${d.restH.toFixed(1)}h rest${d.reason ? ` — ${d.reason}` : ""}`}
+                        style={{
+                          height: 24, borderRadius: 3, margin: "0 1px",
+                          background: d.status === "fail" ? "rgba(239,68,68,0.75)" : d.status === "manila" ? "rgba(245,158,11,0.5)" : "rgba(22,163,106,0.2)",
+                        }} />
+                    ))}
+                    <div style={{ textAlign: "center" }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: ncCount >= 5 ? colors.red : ncCount >= 3 ? colors.amber : colors.textSecondary }}>
+                        {ncCount}/10
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </ChartPanel>
+        </div>
+      )}
+
+      {/* Row 7: Crew Watch List */}
+      <ChartPanel title="Crew watch list — persistent non-compliances">
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr style={{ background: "#f8fafc" }}>
-              <th style={{ ...thStyle, width: 30 }}>#</th>
               <th style={thStyle}>Seafarer</th>
               <th style={thStyle}>Vessel</th>
-              <th style={thStyle}>Dept</th>
               <th style={{ ...thStyle, textAlign: "center" }}>NC days (30d)</th>
-              <th style={{ ...thStyle, textAlign: "center" }}>Rest today</th>
-              <th style={{ ...thStyle, textAlign: "center" }}>24h status</th>
+              <th style={{ ...thStyle, textAlign: "center" }}>10-day pattern</th>
+              <th style={{ ...thStyle, textAlign: "center" }}>Trend</th>
+              <th style={thStyle}>Summary</th>
             </tr>
           </thead>
           <tbody>
-            {m.worstCrew.map((c, i) => (
+            {m.watchListCrew.slice(0, 15).map(c => (
               <tr key={c.id}
                 style={{ borderTop: `1px solid ${colors.border}`, cursor: "pointer", transition: "background 0.15s" }}
                 onMouseEnter={e => e.currentTarget.style.background = "#f0f9ff"}
                 onMouseLeave={e => e.currentTarget.style.background = colors.white}
-                onClick={() => {
-                  const vessel = VESSEL_DATA.find(v => v.id === c.vesselId);
-                  if (vessel && onSelectCrew) onSelectCrew(vessel, c);
-                }}
+                onClick={() => handleCrewClick(c)}
               >
-                <td style={{ ...tdStyle, color: colors.textSecondary, fontWeight: 500 }}>{i + 1}</td>
                 <td style={tdStyle}>
                   <div style={{ fontWeight: 600, color: colors.linkBlue }}>{c.name}</div>
-                  <div style={{ fontSize: 11, color: colors.textSecondary }}>{c.rank}</div>
+                  <div style={{ fontSize: 11, color: colors.textSecondary }}>{c.rank} — {c.dept}</div>
                 </td>
                 <td style={{ ...tdStyle, fontSize: 12, color: colors.textSecondary }}>{c.vesselName}</td>
-                <td style={{ ...tdStyle, fontSize: 12, color: colors.textSecondary }}>{c.dept}</td>
                 <td style={{ ...tdStyle, textAlign: "center" }}><SeverityIndicator ncDays30={c.ncDays30} /></td>
-                <td style={{ ...tdStyle, textAlign: "center", color: parseFloat(c.restToday) < 10 ? colors.red : colors.textSecondary, fontWeight: parseFloat(c.restToday) < 10 ? 600 : 400 }}>{c.restToday}</td>
-                <td style={{ ...tdStyle, textAlign: "center" }}><Chip type={c.daily24h} /></td>
+                <td style={{ ...tdStyle, textAlign: "center" }}>{dotTimeline(c.timeline)}</td>
+                <td style={{ ...tdStyle, textAlign: "center" }}>{trendIndicator(c.trend)}</td>
+                <td style={tdStyle}>
+                  <div style={{ fontSize: 12, color: colors.text }}>{c.streakDesc}</div>
+                  {c.topReason && <div style={{ fontSize: 11, color: colors.textSecondary, fontStyle: "italic", marginTop: 2 }}>{c.topReason}</div>}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -939,8 +1141,8 @@ function VesselDetail({ vessel, onBack, onSelectCrew, acknowledgements, onAcknow
                   <th style={{ ...thStyle, textAlign: "center" }}>24h compliance</th>
                   <th style={{ ...thStyle, textAlign: "center" }}>7d compliance</th>
                   <th style={{ ...thStyle, textAlign: "center" }}>NC days (30d)</th>
-                  <th style={{ ...thStyle, textAlign: "center" }}>Rest today</th>
-                  <th style={{ ...thStyle, textAlign: "center" }}>Work today</th>
+                  <th style={{ ...thStyle, textAlign: "center" }}>Rest (24h)</th>
+                  <th style={{ ...thStyle, textAlign: "center" }}>Work (24h)</th>
                   <th style={{ ...thStyle, textAlign: "right" }}>Last entry</th>
                 </tr>
               </thead>
@@ -967,8 +1169,8 @@ function VesselDetail({ vessel, onBack, onSelectCrew, acknowledgements, onAcknow
                     <td style={{ ...tdStyle, textAlign: "center" }}><Chip type={c.daily24h} /></td>
                     <td style={{ ...tdStyle, textAlign: "center" }}><Chip type={c.weekly7d} /></td>
                     <td style={{ ...tdStyle, textAlign: "center" }}><SeverityIndicator ncDays30={c.ncDays30} /></td>
-                    <td style={{ ...tdStyle, textAlign: "center", color: colors.textSecondary }}>{c.restToday}</td>
-                    <td style={{ ...tdStyle, textAlign: "center", color: parseFloat(c.workToday) >= 14 ? colors.red : colors.textSecondary, fontWeight: parseFloat(c.workToday) >= 14 ? 600 : 400 }}>{c.workToday}</td>
+                    <td style={{ ...tdStyle, textAlign: "center", color: c.rest24h && parseFloat(c.rest24h) < 10 ? colors.red : colors.textSecondary, fontWeight: c.rest24h && parseFloat(c.rest24h) < 10 ? 600 : 400 }}>{c.rest24h || "—"}</td>
+                    <td style={{ ...tdStyle, textAlign: "center", color: c.work24h && parseFloat(c.work24h) >= 14 ? colors.red : colors.textSecondary, fontWeight: c.work24h && parseFloat(c.work24h) >= 14 ? 600 : 400 }}>{c.work24h || "—"}</td>
                     <td style={{ ...tdStyle, textAlign: "right", color: c.lastEntry === "Today" ? colors.textSecondary : colors.amber }}>{c.lastEntry}</td>
                   </tr>
                   );
@@ -1293,14 +1495,107 @@ function AcknowledgementPanel({ vesselId, crew, displayDays, acknowledgements, o
 const thStyle = { textAlign: "left", padding: "10px 14px", fontSize: 12, fontWeight: 600, color: "#64748b" };
 const tdStyle = { padding: "10px 14px" };
 
+/* ─── Route helpers ─── */
+function useRouteData() {
+  const { vesselId, crewId } = useParams();
+  const vessel = vesselId ? VESSEL_DATA.find(v => v.id === parseInt(vesselId, 10)) : null;
+  const crew = vessel && crewId ? vessel.crew.find(c => c.id === parseInt(crewId, 10)) : null;
+  return { vessel, crew };
+}
+
+function useFleetBase() {
+  const location = useLocation();
+  return location.pathname.startsWith("/dashboard") ? "dashboard" : "table";
+}
+
+/* ─── Breadcrumb ─── */
+function Breadcrumb() {
+  const { vessel, crew } = useRouteData();
+  const base = useFleetBase();
+  const basePath = `/${base}`;
+  const baseLabel = base === "dashboard" ? "Fleet (Dashboard)" : "Fleet (Table)";
+
+  return (
+    <div style={{ padding: "10px 24px", fontSize: 12, color: colors.textSecondary, display: "flex", gap: 6, alignItems: "center" }}>
+      <Link to={basePath} style={{ color: colors.linkBlue, fontWeight: 500, textDecoration: "none", cursor: "pointer" }}>
+        {baseLabel}
+      </Link>
+      {vessel && (
+        <>
+          <span>/</span>
+          {crew ? (
+            <Link to={`${basePath}/vessel/${vessel.id}`} style={{ color: colors.linkBlue, fontWeight: 500, textDecoration: "none", cursor: "pointer" }}>
+              {vessel.name}
+            </Link>
+          ) : (
+            <span style={{ color: colors.textSecondary, fontWeight: 500 }}>{vessel.name}</span>
+          )}
+        </>
+      )}
+      {crew && (
+        <>
+          <span>/</span>
+          <span style={{ color: colors.textSecondary }}>{crew.name}</span>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ─── Routed wrappers ─── */
+function RoutedFleetOverview() {
+  const navigate = useNavigate();
+  const base = useFleetBase();
+
+  return (
+    <FleetOverview
+      onSelectVessel={v => navigate(`/${base}/vessel/${v.id}`)}
+      onSelectCrew={(v, c) => navigate(`/${base}/vessel/${v.id}/crew/${c.id}`)}
+      fleetView={base}
+      setFleetView={view => navigate(`/${view}`)}
+    />
+  );
+}
+
+function VesselDetailRoute({ acknowledgements, onAcknowledge }) {
+  const navigate = useNavigate();
+  const base = useFleetBase();
+  const { vessel } = useRouteData();
+
+  if (!vessel) return <Navigate to="/table" replace />;
+
+  return (
+    <VesselDetail
+      vessel={vessel}
+      onBack={() => navigate(`/${base}`)}
+      onSelectCrew={c => navigate(`/${base}/vessel/${vessel.id}/crew/${c.id}`)}
+      acknowledgements={acknowledgements}
+      onAcknowledge={onAcknowledge}
+    />
+  );
+}
+
+function SeafarerDetailRoute({ acknowledgements, onAcknowledge }) {
+  const navigate = useNavigate();
+  const base = useFleetBase();
+  const { vessel, crew } = useRouteData();
+
+  if (!vessel || !crew) return <Navigate to="/table" replace />;
+
+  return (
+    <SeafarerDetail
+      crew={crew}
+      vessel={vessel}
+      onBack={() => navigate(`/${base}/vessel/${vessel.id}`)}
+      acknowledgements={acknowledgements}
+      onAcknowledge={onAcknowledge}
+    />
+  );
+}
+
 /* ─── MAIN APP ─── */
 export default function App() {
-  const [screen, setScreen] = useState("fleet");
-  const [selectedVessel, setSelectedVessel] = useState(null);
-  const [selectedCrew, setSelectedCrew] = useState(null);
   const [acknowledgements, setAcknowledgements] = useState([]);
-  const [fleetView, setFleetView] = useState("table");
-
   const handleAcknowledge = (ack) => setAcknowledgements(prev => [...prev, ack]);
 
   return (
@@ -1332,53 +1627,19 @@ export default function App() {
         </div>
 
         {/* Breadcrumbs */}
-        <div style={{ padding: "10px 24px", fontSize: 12, color: colors.textSecondary, display: "flex", gap: 6, alignItems: "center" }}>
-          <span style={{ cursor: "pointer", color: colors.linkBlue, fontWeight: 500 }} onClick={() => { setScreen("fleet"); setSelectedVessel(null); setSelectedCrew(null); }}>Fleet</span>
-          {selectedVessel && (
-            <>
-              <span>/</span>
-              <span style={{ cursor: selectedCrew ? "pointer" : "default", color: selectedCrew ? colors.linkBlue : colors.textSecondary, fontWeight: 500 }}
-                onClick={() => { if (selectedCrew) { setScreen("vessel"); setSelectedCrew(null); } }}>
-                {selectedVessel.name}
-              </span>
-            </>
-          )}
-          {selectedCrew && (
-            <>
-              <span>/</span>
-              <span style={{ color: colors.textSecondary }}>{selectedCrew.name}</span>
-            </>
-          )}
-        </div>
+        <Breadcrumb />
 
         {/* Content */}
         <div style={{ padding: "0 24px 40px" }}>
-          {screen === "fleet" && (
-            <FleetOverview
-              onSelectVessel={v => { setSelectedVessel(v); setScreen("vessel"); }}
-              onSelectCrew={(v, c) => { setSelectedVessel(v); setSelectedCrew(c); setScreen("seafarer"); }}
-              fleetView={fleetView}
-              setFleetView={setFleetView}
-            />
-          )}
-          {screen === "vessel" && selectedVessel && (
-            <VesselDetail
-              vessel={selectedVessel}
-              onBack={() => { setScreen("fleet"); setSelectedVessel(null); }}
-              onSelectCrew={c => { setSelectedCrew(c); setScreen("seafarer"); }}
-              acknowledgements={acknowledgements}
-              onAcknowledge={handleAcknowledge}
-            />
-          )}
-          {screen === "seafarer" && selectedCrew && selectedVessel && (
-            <SeafarerDetail
-              crew={selectedCrew}
-              vessel={selectedVessel}
-              onBack={() => { setScreen("vessel"); setSelectedCrew(null); }}
-              acknowledgements={acknowledgements}
-              onAcknowledge={handleAcknowledge}
-            />
-          )}
+          <Routes>
+            <Route path="/table" element={<RoutedFleetOverview />} />
+            <Route path="/dashboard" element={<RoutedFleetOverview />} />
+            <Route path="/table/vessel/:vesselId" element={<VesselDetailRoute acknowledgements={acknowledgements} onAcknowledge={handleAcknowledge} />} />
+            <Route path="/dashboard/vessel/:vesselId" element={<VesselDetailRoute acknowledgements={acknowledgements} onAcknowledge={handleAcknowledge} />} />
+            <Route path="/table/vessel/:vesselId/crew/:crewId" element={<SeafarerDetailRoute acknowledgements={acknowledgements} onAcknowledge={handleAcknowledge} />} />
+            <Route path="/dashboard/vessel/:vesselId/crew/:crewId" element={<SeafarerDetailRoute acknowledgements={acknowledgements} onAcknowledge={handleAcknowledge} />} />
+            <Route path="*" element={<Navigate to="/table" replace />} />
+          </Routes>
         </div>
       </div>
     </div>

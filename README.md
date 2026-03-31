@@ -4,13 +4,24 @@ An interactive prototype for a **shore-side Hours of Work and Rest (HWR) complia
 
 ## What it does
 
-The prototype provides a three-level drill-down view:
+The prototype provides two entry points and a three-level drill-down:
 
-1. **Fleet Overview** — All vessels ranked by compliance urgency, showing active non-conformities, NC days in the last 30 days, crew timesheet completeness, and OCIMF/SIRE 2.0 threshold alerts.
+### Fleet Table (`/table`)
+All vessels ranked by compliance urgency, showing active non-conformities, NC days in the last 30 days, crew timesheet completeness, and OCIMF/SIRE 2.0 threshold alerts. Click any vessel row to drill into its detail view.
 
-2. **Vessel Detail** — Per-vessel crew roster grouped by department (Top Four, Deck, Engine, Catering), with each seafarer's 24h and 7d compliance status, rest/work hours, and NC severity indicators.
+### Fleet Dashboard (`/dashboard`)
+Analytics view with:
+- **KPI cards** — total crew, active NCs, fleet NC days (30d), OCIMF flagged vessels, average rest hours
+- **Fleet insight cards** — auto-generated plain-English observations highlighting vessel-level patterns, root causes, department trends, longest active streaks, and improvement signals
+- **Charts** — NC days by vessel, reason, location, vessel type, department (expandable by rank), and a 10-day trend
+- **Repeat offender heatmap** — person-by-day grid for the top 8 most concerning crew, making compliance patterns visible at a glance
+- **Crew watch list** — crew with persistent NCs, showing 10-day dot timelines, trend indicators (worsening/improving/stable), streak descriptions, and top NC reasons
 
-3. **Seafarer Detail** — Individual crew member view with a 24-hour interactive timeline (Gantt chart), 10-day timesheet history, and computed compliance summaries. Clicking different days in the timesheet updates the timeline in real time.
+### Vessel Detail (`/table/vessel/:id` or `/dashboard/vessel/:id`)
+Per-vessel crew roster grouped by department (Top Four, Deck, Engine, Catering), with each seafarer's 24h and 7d compliance status, rest/work hours (last 24h), NC severity indicators, and last entry date.
+
+### Seafarer Detail (`.../crew/:id`)
+Individual crew member view with a 24-hour interactive timeline (Gantt chart), 10-day timesheet history, computed compliance summaries, and OCIMF shore-side acknowledgement panel. Clicking different days in the timesheet updates the timeline in real time.
 
 ## Compliance rules implemented
 
@@ -36,7 +47,7 @@ The prototype uses a **seeded pseudo-random number generator** to produce determ
 - **Crew behavior profiles** (clean, borderline, problem) that drive realistic compliance patterns
 - **Vessel story configs** that control how many problem/borderline crew each vessel has
 
-All vessel-level statistics (active NCs, NC days, completeness) are aggregated from the underlying crew data.
+All vessel-level statistics (active NCs, NC days, completeness) are aggregated from the underlying crew data. Dashboard insights (trend analysis, streak detection, concern scoring) are computed from the same underlying timesheet data.
 
 ## Getting started
 
@@ -45,14 +56,15 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173) to view the prototype.
+Open [http://localhost:5173](http://localhost:5173) to view the prototype. It redirects to `/table` by default; switch to `/dashboard` for the analytics view.
 
 ## Tech stack
 
 - [React](https://react.dev/) 18
+- [React Router](https://reactrouter.com/) 7
 - [Vite](https://vitejs.dev/) 5
 - Single-file architecture — all components and data generation in `shore-side-hwr-prototype.jsx`
-- No external UI libraries — all styling is inline
+- No external UI or charting libraries — all styling is inline, all charts are hand-built
 
 ## Build
 

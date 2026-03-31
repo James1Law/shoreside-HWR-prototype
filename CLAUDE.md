@@ -10,20 +10,28 @@ npm run build    # Production build
 npm run preview  # Preview production build locally
 ```
 
-No test suite is configured.
+No test suite or CI pipeline is configured.
 
 ## Architecture
 
-This is a single-file React prototype — all application code lives in `shore-side-hwr-prototype.jsx`. The entry point `src/main.jsx` imports and mounts it.
+This is a single-file React prototype — all application code lives in `shore-side-hwr-prototype.jsx`. The entry point `src/main.jsx` imports and mounts it inside a `<BrowserRouter>`.
 
-**Navigation** is managed with plain `useState` in the root `App` component — no router. The `screen` state cycles through three views: `"fleet"` → `"vessel"` → `"crew"`. `selectedVessel` and `selectedCrew` hold the current drill-down context.
+**Routing** uses `react-router-dom` v7. The URL structure is:
+- `/table` — fleet table view
+- `/dashboard` — fleet dashboard/analytics view
+- `/table/vessel/:vesselId` and `/dashboard/vessel/:vesselId` — vessel detail
+- `/table/vessel/:vesselId/crew/:crewId` and `/dashboard/vessel/:vesselId/crew/:crewId` — seafarer detail
+- `/` redirects to `/table`
+
+Drill-down pages are nested under `/table` or `/dashboard` so the breadcrumb and back-navigation know which fleet view the user came from. Helper hooks `useRouteData()` and `useFleetBase()` resolve URL params to data objects and determine the active base path. Routed wrapper components (`RoutedFleetOverview`, `VesselDetailRoute`, `SeafarerDetailRoute`) bridge between the router and the existing screen components.
 
 **Screens:**
-- `FleetOverview` — sortable table of all vessels; clicking a row drills into `VesselDetail`
+- `FleetOverview` — sortable table of all vessels with a toggle to switch between table and dashboard views; clicking a row drills into `VesselDetail`
+- `FleetDashboard` — fleet-level analytics with KPI cards, insight cards (auto-generated plain-English observations), charts (by vessel, reason, location, type, trend, department), a repeat-offender heatmap, and a crew watch list with 10-day dot timelines and trend indicators
 - `VesselDetail` — per-vessel summary cards and crew roster grouped by department; clicking a crew row drills into `SeafarerDetail`
-- `SeafarerDetail` — individual seafarer timesheets, 24h Gantt bar, and NC history
+- `SeafarerDetail` — individual seafarer timesheets, 24h Gantt bar, NC history, and OCIMF acknowledgement panel
 
-**Data** is entirely hardcoded mock data at the top of the file (`VESSELS`, `CREW_PACIFIC`, `CREW_CORAL`, `TIMESHEET_DATA`, `GANTT_PERIODS`). `VesselDetail` picks crew data based on `vessel.id` (1 → `CREW_PACIFIC`, 2 → `CREW_CORAL`, others → a slice of `CREW_PACIFIC`).
+**Data** is generated deterministically using a seeded PRNG at the top of the file. `VESSEL_PROFILES` defines 8 vessels with crew behavior configs. `generateCrew()`, `generateDailyHours()`, and `computeCompliance()` produce enriched crew objects with 30 days of work/rest data. `CREW_TIMESHEETS` (a Map keyed by `"vesselId-crewId"`) stores 10-day `displayDays` arrays with per-day compliance status, reasons, and Gantt periods. `computeDashboardMetrics()` aggregates everything into `DASHBOARD_METRICS` including `watchListCrew` (with timelines, trends, concern scores) and `fleetInsights` (auto-generated insight cards).
 
 **Styling** is done entirely with inline styles. A `colors` object at the top of the file is the single source of truth for the color palette. Two shared style constants (`thStyle`, `tdStyle`) are defined just above the `App` component and used across all table components.
 
