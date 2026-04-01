@@ -546,6 +546,49 @@ function computeDashboardMetrics() {
 }
 const DASHBOARD_METRICS = computeDashboardMetrics();
 
+function describeNcTypes(d, ganttPeriods) {
+  const types = [];
+  if (d.daily === "fail") types.push("Daily rest < 10h");
+  if (d.daily === "manila") types.push("Daily rest < 10h (Manila exception)");
+  const restPeriods = ganttPeriods.filter(p => p.type === "rest");
+  const longestRest = restPeriods.reduce((max, p) => Math.max(max, p.end - p.start), 0);
+  if (restPeriods.length > 2) types.push("Rest split into " + restPeriods.length + " periods (max 2)");
+  else if (longestRest < 6 && d.intervals === "fail") types.push("Longest rest period < 6h");
+  if (d.weekly === "fail") types.push("Weekly rest < 77h");
+  return types;
+}
+
+function buildNcDrillDownRows(filterType, filterValue) {
+  const rows = [];
+  for (const v of VESSEL_DATA) {
+    for (const c of v.crew) {
+      const tsData = CREW_TIMESHEETS.get(`${v.id}-${c.id}`);
+      if (!tsData) continue;
+      tsData.displayDays.forEach((d) => {
+        const isNc = d.daily === "fail" || d.intervals === "fail";
+        if (!isNc) return;
+        let match = false;
+        if (filterType === "reason") match = d.reason === filterValue;
+        else if (filterType === "location") match = v.location === filterValue;
+        else if (filterType === "date") match = d.date === filterValue;
+        if (match) {
+          rows.push({
+            vesselId: v.id, vesselName: v.name, crewId: c.id, crewName: c.name,
+            rank: c.rank, dept: c.dept, date: d.date, reason: d.reason,
+            workH: d.workH, restH: d.restH, daily: d.daily, intervals: d.intervals,
+            ganttPeriods: d.ganttPeriods,
+            ncTypes: describeNcTypes(d, d.ganttPeriods),
+            deficit: d.restH < 10 ? (d.restH - 10) : 0,
+            ncDays30: c.ncDays30,
+          });
+        }
+      });
+    }
+  }
+  rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.vesselName.localeCompare(b.vesselName)));
+  return rows;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    UI LAYER — styles, components, screens
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -675,14 +718,14 @@ function DonutChart({ data }) {
   );
 }
 
-function TrendChart({ data }) {
+function TrendChart({ data, onClickItem }) {
   const max = Math.max(...data.map(d => d.value), 1);
   return (
     <div>
       <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 140 }}>
         {data.map((d, i) => (
-          <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>
-            {d.value > 0 && <div style={{ fontSize: 10, fontWeight: 600, color: colors.text, marginBottom: 2 }}>{d.value}</div>}
+          <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%", cursor: onClickItem && d.value > 0 ? "pointer" : "default" }} onClick={() => onClickItem && d.value > 0 && onClickItem(d, i)}>
+            {d.value > 0 && <div style={{ fontSize: 10, fontWeight: 600, color: onClickItem ? colors.linkBlue : colors.text, marginBottom: 2 }}>{d.value}</div>}
             <div style={{
               width: "100%", maxWidth: 40,
               height: `${Math.max((d.value / max) * 110, d.value > 0 ? 6 : 2)}px`,
@@ -708,9 +751,13 @@ function TrendChart({ data }) {
 const VESSEL_TYPE_COLORS = { "Bulk Carrier": "#3b82f6", "Oil Tanker": "#ef4444", "Container": "#f59e0b", "Chemical Tanker": "#8b5cf6", "General Cargo": "#0891b2" };
 const DEPT_COLORS = { "Top Four": "#ef4444", "Deck": "#3b82f6", "Engine": "#f59e0b", "Catering": "#8b5cf6" };
 
-function FleetDashboard({ onSelectVessel, onSelectCrew }) {
+function FleetDashboard({ onSelectVessel, onSelectCrew, onDrillDown }) {
   const m = DASHBOARD_METRICS;
   const [expandedDept, setExpandedDept] = useState(null);
+
+  const handleReasonClick = (d) => onDrillDown("reason", d.label);
+  const handleLocationClick = (d) => onDrillDown("location", d.label);
+  const handleTrendClick = (d) => { if (d.value > 0) onDrillDown("date", d.label); };
 
   const handleVesselClick = (d) => {
     const vessel = VESSEL_DATA.find(v => v.name === d.label);
@@ -792,14 +839,14 @@ function FleetDashboard({ onSelectVessel, onSelectCrew }) {
           <HorizontalBarChart data={m.ncByVessel} colorFn={d => d.value >= 10 ? colors.red : d.value >= 3 ? colors.amber : colors.green} onClickItem={handleVesselClick} />
         </ChartPanel>
         <ChartPanel title="NC days by reason (10d visible)">
-          <HorizontalBarChart data={m.ncByReason} barColor={colors.teal} />
+          <HorizontalBarChart data={m.ncByReason} barColor={colors.teal} onClickItem={handleReasonClick} />
         </ChartPanel>
       </div>
 
       {/* Row 4: By Location + By Vessel Type */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
         <ChartPanel title="NC days by location (30d)">
-          <HorizontalBarChart data={m.ncByLocation} barColor={colors.blue} />
+          <HorizontalBarChart data={m.ncByLocation} barColor={colors.blue} onClickItem={handleLocationClick} />
         </ChartPanel>
         <ChartPanel title="NC days by vessel type (30d)">
           <DonutChart data={m.ncByVesselType.map(d => ({ ...d, color: VESSEL_TYPE_COLORS[d.label] || colors.textSecondary }))} />
@@ -809,7 +856,7 @@ function FleetDashboard({ onSelectVessel, onSelectCrew }) {
       {/* Row 5: Trend + By Department */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
         <ChartPanel title="Daily NC occurrences (10-day trend)">
-          <TrendChart data={m.ncTrend} />
+          <TrendChart data={m.ncTrend} onClickItem={handleTrendClick} />
         </ChartPanel>
         <ChartPanel title="NC days by department (30d)">
           <HorizontalBarChart data={m.ncByDepartment} colorFn={d => DEPT_COLORS[d.label] || colors.teal} onClickItem={(d) => setExpandedDept(expandedDept === d.label ? null : d.label)} />
@@ -913,12 +960,13 @@ function FleetDashboard({ onSelectVessel, onSelectCrew }) {
           </tbody>
         </table>
       </ChartPanel>
+
     </div>
   );
 }
 
 /* ─── SCREEN 1: Fleet Overview ─── */
-function FleetOverview({ onSelectVessel, onSelectCrew, fleetView, setFleetView }) {
+function FleetOverview({ onSelectVessel, onSelectCrew, onDrillDown, fleetView, setFleetView }) {
   const [sortBy, setSortBy] = useState("severity");
   const sorted = [...VESSEL_DATA].sort((a, b) => {
     if (sortBy === "severity") return b.ncDays30 - a.ncDays30 || b.activeNCs - a.activeNCs;
@@ -957,7 +1005,7 @@ function FleetOverview({ onSelectVessel, onSelectCrew, fleetView, setFleetView }
       </div>
 
       {fleetView === "dashboard" ? (
-        <FleetDashboard onSelectVessel={onSelectVessel} onSelectCrew={onSelectCrew} />
+        <FleetDashboard onSelectVessel={onSelectVessel} onSelectCrew={onSelectCrew} onDrillDown={onDrillDown} />
       ) : (
         <>
           {/* OCIMF threshold legend */}
@@ -1314,9 +1362,8 @@ function SeafarerDetail({ crew, vessel, onBack, acknowledgements, onAcknowledge 
               <th style={thStyle}>Status</th>
               <th style={{ ...thStyle, textAlign: "center" }}>Work</th>
               <th style={{ ...thStyle, textAlign: "center" }}>Rest</th>
-              <th style={{ ...thStyle, textAlign: "center" }}>24h</th>
-              <th style={{ ...thStyle, textAlign: "center" }}>7d</th>
-              <th style={{ ...thStyle, textAlign: "center" }}>Intervals</th>
+              <th style={{ ...thStyle, textAlign: "center" }}>Deficit</th>
+              <th style={thStyle}>NC type</th>
               <th style={thStyle}>NC reason</th>
             </tr>
           </thead>
@@ -1332,9 +1379,10 @@ function SeafarerDetail({ crew, vessel, onBack, acknowledgements, onAcknowledge 
                 <td style={tdStyle}><StatusBadge status={t.status} /></td>
                 <td style={{ ...tdStyle, textAlign: "center", color: t.workH >= 14 ? colors.red : colors.textSecondary, fontWeight: t.workH >= 14 ? 600 : 400 }}>{t.work}</td>
                 <td style={{ ...tdStyle, textAlign: "center", color: t.restH < 10 ? colors.red : colors.textSecondary, fontWeight: t.restH < 10 ? 600 : 400 }}>{t.rest}</td>
-                <td style={{ ...tdStyle, textAlign: "center" }}><Chip type={t.daily} /></td>
-                <td style={{ ...tdStyle, textAlign: "center" }}><Chip type={t.weekly} /></td>
-                <td style={{ ...tdStyle, textAlign: "center" }}><Chip type={t.intervals} /></td>
+                <td style={{ ...tdStyle, textAlign: "center", fontVariantNumeric: "tabular-nums", color: t.restH < 10 ? colors.red : colors.textSecondary, fontWeight: t.restH < 10 ? 600 : 400 }}>{t.restH < 10 ? (t.restH - 10).toFixed(1) + "h" : "—"}</td>
+                <td style={tdStyle}>
+                  {(() => { const types = describeNcTypes(t, t.ganttPeriods); return types.length > 0 ? types.map((typ, j) => <div key={j} style={{ fontSize: 12, color: colors.text, lineHeight: 1.4 }}>{typ}</div>) : <span style={{ color: colors.textSecondary }}>—</span>; })()}
+                </td>
                 <td style={{ ...tdStyle, color: t.reason ? colors.text : colors.textSecondary, fontStyle: t.reason ? "normal" : "italic" }}>
                   {t.reason || "—"}
                   {t.reason && ackStatus.ackedDateSet.has(t.date) && (
@@ -1495,6 +1543,134 @@ function AcknowledgementPanel({ vesselId, crew, displayDays, acknowledgements, o
 const thStyle = { textAlign: "left", padding: "10px 14px", fontSize: 12, fontWeight: 600, color: "#64748b" };
 const tdStyle = { padding: "10px 14px" };
 
+/* ─── SCREEN 4: NC Drill-Down Page ─── */
+const FILTER_TYPE_LABELS = { reason: "NC days by reason", location: "NC days by location", date: "Daily NC occurrences" };
+
+function NcDrillDownPage({ filterType, filterValue, onBack, onSelectCrew }) {
+  const rows = buildNcDrillDownRows(filterType, filterValue);
+  const [selectedIdx, setSelectedIdx] = useState(0);
+  const selected = rows[selectedIdx] || null;
+
+  return (
+    <div>
+      <button onClick={onBack} style={{ background: "none", border: "none", color: colors.linkBlue, cursor: "pointer", fontSize: 13, fontWeight: 500, padding: 0, marginBottom: 12, display: "flex", alignItems: "center", gap: 4 }}>
+        ← Back to Fleet (Dashboard)
+      </button>
+
+      <div style={{ marginBottom: 20 }}>
+        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: colors.text }}>{FILTER_TYPE_LABELS[filterType] || "NC drill-down"}</h2>
+        <p style={{ margin: "4px 0 0", fontSize: 13, color: colors.textSecondary }}>
+          {filterValue} &middot; {rows.length} non-compliance event{rows.length !== 1 ? "s" : ""}
+          {filterType === "location" && <span style={{ fontStyle: "italic", marginLeft: 6 }}>(showing 10-day detail window)</span>}
+        </p>
+      </div>
+
+      {selected && (
+        <div style={{ background: colors.white, borderRadius: 10, border: `1px solid ${colors.border}`, marginBottom: 20, overflow: "hidden" }}>
+          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${colors.border}`, fontSize: 14, fontWeight: 700, color: colors.text, display: "flex", alignItems: "center", gap: 8 }}>
+            {selected.date} — {selected.crewName} ({selected.rank}, {selected.vesselName})
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "140px repeat(24, minmax(40px, 1fr))", minWidth: 900 }}>
+              <div style={{ borderBottom: `1px solid ${colors.border}`, borderRight: `1px solid ${colors.border}`, background: "#f8fafc" }} />
+              {Array.from({ length: 24 }, (_, h) => (
+                <div key={`h${h}`} style={{ borderBottom: `1px solid ${colors.border}`, borderRight: `1px solid ${colors.border}`, background: "#f8fafc", textAlign: "center", fontSize: 11, color: colors.textSecondary, padding: "5px 0" }}>
+                  {String(h).padStart(2, "0")}
+                </div>
+              ))}
+              <div style={{ borderRight: `1px solid ${colors.border}`, padding: "10px 12px", background: "#fafbfc", display: "flex", flexDirection: "column", justifyContent: "center", minHeight: 64 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: colors.text }}>{selected.crewName}</div>
+                <div style={{ fontSize: 11, color: colors.textSecondary }}>{selected.rank}</div>
+              </div>
+              <div style={{ gridColumn: "2 / -1", position: "relative", minHeight: 64, display: "grid", gridTemplateColumns: "repeat(24, minmax(40px, 1fr))" }}>
+                {Array.from({ length: 24 }, (_, h) => (
+                  <div key={`c${h}`} style={{ borderRight: `1px solid ${colors.border}`, background: h % 2 === 0 ? "#fafbfc" : colors.white }} />
+                ))}
+                {selected.ganttPeriods.filter(p => p.type !== "rest").map((p, i) => {
+                  const isDrill = p.type === "drill";
+                  return (
+                    <div key={i} style={{
+                      position: "absolute",
+                      left: `calc(${(p.start / 24) * 100}% + 1px)`,
+                      width: `calc(${((p.end - p.start) / 24) * 100}% - 3px)`,
+                      top: 8, bottom: 8,
+                      background: isDrill ? "#ede9fe" : "#dbeafe",
+                      borderLeft: `3px solid ${isDrill ? "#8b5cf6" : "#3b82f6"}`,
+                      borderRadius: "0 4px 4px 0",
+                      padding: "4px 8px", overflow: "hidden", boxSizing: "border-box", zIndex: 1,
+                    }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: isDrill ? "#6d28d9" : "#1d4ed8", whiteSpace: "nowrap" }}>
+                        {isDrill ? "Drill" : "Work"}
+                      </div>
+                      <div style={{ fontSize: 10, color: colors.textSecondary, whiteSpace: "nowrap" }}>
+                        {String(Math.floor(p.start)).padStart(2, "0")}:{String(Math.round((p.start % 1) * 60)).padStart(2, "0")} – {String(Math.floor(p.end)).padStart(2, "0")}:{String(Math.round((p.end % 1) * 60)).padStart(2, "0")} · {p.end - p.start}h
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 16, padding: "8px 16px", borderTop: `1px solid ${colors.border}`, fontSize: 11, color: colors.textSecondary, background: "#f8fafc" }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 12, height: 12, borderRadius: 2, background: "#dbeafe", border: "1px solid #93c5fd", display: "inline-block" }} />Work</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 12, height: 12, borderRadius: 2, background: "#ede9fe", border: "1px solid #c4b5fd", display: "inline-block" }} />Drill</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 12, height: 12, borderRadius: 2, background: "#f1f5f9", border: "1px solid #e2e8f0", display: "inline-block" }} />Rest</span>
+          </div>
+        </div>
+      )}
+
+      <div style={{ background: colors.white, borderRadius: 10, border: `1px solid ${colors.border}`, overflow: "hidden" }}>
+        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${colors.border}`, fontSize: 14, fontWeight: 700, color: colors.text }}>
+          Non-compliance events
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: "#f8fafc" }}>
+              <th style={thStyle}>Date</th>
+              <th style={thStyle}>Vessel</th>
+              <th style={thStyle}>Seafarer</th>
+              <th style={thStyle}>Reason</th>
+              <th style={{ ...thStyle, textAlign: "center" }}>Work</th>
+              <th style={{ ...thStyle, textAlign: "center" }}>Rest</th>
+              <th style={{ ...thStyle, textAlign: "center" }}>Deficit</th>
+              <th style={thStyle}>NC type</th>
+              <th style={{ ...thStyle, textAlign: "center" }}>NC days (30d)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i}
+                onClick={() => setSelectedIdx(i)}
+                style={{ borderTop: `1px solid ${colors.border}`, cursor: "pointer", background: selectedIdx === i ? "#eff6ff" : colors.white, transition: "background 0.15s" }}
+                onMouseEnter={e => { if (selectedIdx !== i) e.currentTarget.style.background = "#f8fafc"; }}
+                onMouseLeave={e => { if (selectedIdx !== i) e.currentTarget.style.background = colors.white; }}
+              >
+                <td style={{ ...tdStyle, fontWeight: selectedIdx === i ? 700 : 400 }}>{r.date}</td>
+                <td style={tdStyle}><span style={{ fontWeight: 500 }}>{r.vesselName}</span></td>
+                <td style={tdStyle}>
+                  <div style={{ fontWeight: 500, color: colors.linkBlue, cursor: "pointer" }} onClick={e => { e.stopPropagation(); onSelectCrew(r.vesselId, r.crewId); }}>{r.crewName}</div>
+                  <div style={{ fontSize: 11, color: colors.textSecondary }}>{r.rank} &middot; {r.dept}</div>
+                </td>
+                <td style={tdStyle}><span style={{ fontSize: 12 }}>{r.reason || "—"}</span></td>
+                <td style={{ ...tdStyle, textAlign: "center", color: r.workH >= 14 ? colors.red : colors.textSecondary, fontWeight: r.workH >= 14 ? 600 : 400 }}>{r.workH.toFixed(1)}h</td>
+                <td style={{ ...tdStyle, textAlign: "center", color: r.restH < 10 ? colors.red : colors.textSecondary, fontWeight: r.restH < 10 ? 600 : 400 }}>{r.restH.toFixed(1)}h</td>
+                <td style={{ ...tdStyle, textAlign: "center", fontVariantNumeric: "tabular-nums", color: r.deficit < 0 ? colors.red : colors.textSecondary, fontWeight: r.deficit < 0 ? 600 : 400 }}>{r.deficit < 0 ? r.deficit.toFixed(1) + "h" : "—"}</td>
+                <td style={tdStyle}>
+                  {r.ncTypes.map((t, j) => (
+                    <div key={j} style={{ fontSize: 12, color: colors.text, lineHeight: 1.4 }}>{t}</div>
+                  ))}
+                </td>
+                <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: r.ncDays30 >= 3 ? colors.red : r.ncDays30 > 0 ? colors.amber : colors.text }}>{r.ncDays30}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {rows.length === 0 && <div style={{ textAlign: "center", padding: 24, color: colors.textSecondary, fontSize: 13 }}>No matching NC events found</div>}
+      </div>
+    </div>
+  );
+}
+
 /* ─── Route helpers ─── */
 function useRouteData() {
   const { vesselId, crewId } = useParams();
@@ -1514,12 +1690,20 @@ function Breadcrumb() {
   const base = useFleetBase();
   const basePath = `/${base}`;
   const baseLabel = base === "dashboard" ? "Fleet (Dashboard)" : "Fleet (Table)";
+  const { filterType, value } = useParams();
+  const isNcDrillDown = filterType && value && FILTER_TYPE_LABELS[filterType];
 
   return (
     <div style={{ padding: "10px 24px", fontSize: 12, color: colors.textSecondary, display: "flex", gap: 6, alignItems: "center" }}>
       <Link to={basePath} style={{ color: colors.linkBlue, fontWeight: 500, textDecoration: "none", cursor: "pointer" }}>
         {baseLabel}
       </Link>
+      {isNcDrillDown && (
+        <>
+          <span>/</span>
+          <span style={{ color: colors.textSecondary, fontWeight: 500 }}>{FILTER_TYPE_LABELS[filterType]}: {decodeURIComponent(value)}</span>
+        </>
+      )}
       {vessel && (
         <>
           <span>/</span>
@@ -1551,6 +1735,7 @@ function RoutedFleetOverview() {
     <FleetOverview
       onSelectVessel={v => navigate(`/${base}/vessel/${v.id}`)}
       onSelectCrew={(v, c) => navigate(`/${base}/vessel/${v.id}/crew/${c.id}`)}
+      onDrillDown={(type, value) => navigate(`/dashboard/nc/${type}/${encodeURIComponent(value)}`)}
       fleetView={base}
       setFleetView={view => navigate(`/${view}`)}
     />
@@ -1589,6 +1774,23 @@ function SeafarerDetailRoute({ acknowledgements, onAcknowledge }) {
       onBack={() => navigate(`/${base}/vessel/${vessel.id}`)}
       acknowledgements={acknowledgements}
       onAcknowledge={onAcknowledge}
+    />
+  );
+}
+
+function NcDrillDownRoute() {
+  const navigate = useNavigate();
+  const { filterType, value } = useParams();
+  const filterValue = decodeURIComponent(value || "");
+
+  if (!filterType || !filterValue || !FILTER_TYPE_LABELS[filterType]) return <Navigate to="/dashboard" replace />;
+
+  return (
+    <NcDrillDownPage
+      filterType={filterType}
+      filterValue={filterValue}
+      onBack={() => navigate("/dashboard")}
+      onSelectCrew={(vesselId, crewId) => navigate(`/dashboard/vessel/${vesselId}/crew/${crewId}`)}
     />
   );
 }
@@ -1638,6 +1840,7 @@ export default function App() {
             <Route path="/dashboard/vessel/:vesselId" element={<VesselDetailRoute acknowledgements={acknowledgements} onAcknowledge={handleAcknowledge} />} />
             <Route path="/table/vessel/:vesselId/crew/:crewId" element={<SeafarerDetailRoute acknowledgements={acknowledgements} onAcknowledge={handleAcknowledge} />} />
             <Route path="/dashboard/vessel/:vesselId/crew/:crewId" element={<SeafarerDetailRoute acknowledgements={acknowledgements} onAcknowledge={handleAcknowledge} />} />
+            <Route path="/dashboard/nc/:filterType/:value" element={<NcDrillDownRoute />} />
             <Route path="*" element={<Navigate to="/table" replace />} />
           </Routes>
         </div>
